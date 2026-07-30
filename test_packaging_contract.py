@@ -146,13 +146,19 @@ class PackagingContractTest(unittest.TestCase):
         pyinstaller_module = types.ModuleType("PyInstaller")
         utils_module = types.ModuleType("PyInstaller.utils")
 
-        with mock.patch.dict(
-            sys.modules,
-            {
-                "PyInstaller": pyinstaller_module,
-                "PyInstaller.utils": utils_module,
-                "PyInstaller.utils.hooks": hooks_module,
-            },
+        with (
+            mock.patch.dict(
+                sys.modules,
+                {
+                    "PyInstaller": pyinstaller_module,
+                    "PyInstaller.utils": utils_module,
+                    "PyInstaller.utils.hooks": hooks_module,
+                },
+            ),
+            mock.patch.dict(
+                os.environ,
+                {"PROWRAP_BUILD_HOST_MACOS_VERSION": "26.5.2"},
+            ),
         ):
             runpy.run_path(
                 str(SPEC_PATH),
@@ -199,7 +205,7 @@ class PackagingContractTest(unittest.TestCase):
         self.assertEqual(
             bundle_kwargs["info_plist"],
             {
-                "LSMinimumSystemVersion": "12.0",
+                "LSMinimumSystemVersion": "26.5.2",
                 "NSHighResolutionCapable": True,
             },
         )
@@ -212,6 +218,9 @@ class PackagingContractTest(unittest.TestCase):
             {
                 "PROWRAP_DRY_RUN_UNAME_MACHINE": "arm64",
                 "PROWRAP_DRY_RUN_PYTHON_MACHINE": "arm64",
+                "PROWRAP_DRY_RUN_SELECTED_PYTHON_MACHINE": "arm64",
+                "PROWRAP_DRY_RUN_MAIN_ARCHITECTURES": "arm64",
+                "PROWRAP_DRY_RUN_BUILD_HOST_MACOS_VERSION": "26.5.2",
             }
         )
 
@@ -235,6 +244,60 @@ class PackagingContractTest(unittest.TestCase):
                 "[gate] signature verification",
                 "[gate] ZIP creation",
             ],
+        )
+
+    def test_build_script_dry_run_rejects_universal2_main_executable(self):
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "PROWRAP_DRY_RUN_UNAME_MACHINE": "arm64",
+                "PROWRAP_DRY_RUN_PYTHON_MACHINE": "arm64",
+                "PROWRAP_DRY_RUN_SELECTED_PYTHON_MACHINE": "arm64",
+                "PROWRAP_DRY_RUN_MAIN_ARCHITECTURES": "x86_64 arm64",
+                "PROWRAP_DRY_RUN_BUILD_HOST_MACOS_VERSION": "26.5.2",
+            }
+        )
+
+        completed = subprocess.run(
+            ["/bin/bash", str(BUILD_SCRIPT_PATH), "--dry-run"],
+            cwd=REPOSITORY_DIRECTORY,
+            env=environment,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertRegex(
+            completed.stderr,
+            r"arm64-only Mach-O required.*x86_64 arm64",
+        )
+
+    def test_build_script_dry_run_rejects_reused_x86_64_virtualenv(self):
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "PROWRAP_DRY_RUN_UNAME_MACHINE": "arm64",
+                "PROWRAP_DRY_RUN_PYTHON_MACHINE": "arm64",
+                "PROWRAP_DRY_RUN_SELECTED_PYTHON_MACHINE": "x86_64",
+                "PROWRAP_DRY_RUN_MAIN_ARCHITECTURES": "arm64",
+                "PROWRAP_DRY_RUN_BUILD_HOST_MACOS_VERSION": "26.5.2",
+            }
+        )
+
+        completed = subprocess.run(
+            ["/bin/bash", str(BUILD_SCRIPT_PATH), "--dry-run"],
+            cwd=REPOSITORY_DIRECTORY,
+            env=environment,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertRegex(
+            completed.stderr,
+            r"selected build Python must be arm64.*x86_64",
         )
 
 

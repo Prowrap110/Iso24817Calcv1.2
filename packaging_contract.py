@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import platform
+import re
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -83,4 +84,31 @@ def require_arm64(
             "Apple Silicon arm64 build required; "
             f"observed uname -m={observed_uname}, "
             f"platform.machine()={observed_python}"
+        )
+
+
+def minimum_macos_version(build_host_version: str | None = None) -> str:
+    observed_version = build_host_version or platform.mac_ver()[0]
+    if not re.fullmatch(r"\d+\.\d+(?:\.\d+)?", observed_version):
+        raise RuntimeError(
+            "build-host macOS version is required in major.minor or "
+            f"major.minor.patch form; observed {observed_version!r}"
+        )
+    return observed_version
+
+
+def require_arm64_only_mach_o(architectures: str) -> None:
+    observed_architectures = architectures.split()
+    if observed_architectures != ["arm64"]:
+        raise RuntimeError(
+            "arm64-only Mach-O required; observed lipo architectures: "
+            f"{architectures}"
+        )
+
+
+def require_selected_build_python_arm64(python_machine: str) -> None:
+    if python_machine != "arm64":
+        raise RuntimeError(
+            "selected build Python must be arm64; "
+            f"observed platform.machine()={python_machine}"
         )

@@ -1,13 +1,21 @@
+import os
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_all
 
-from packaging_contract import discover_packaging_inputs, packaging_metadata
+from packaging_contract import (
+    discover_packaging_inputs,
+    minimum_macos_version,
+    packaging_metadata,
+)
 
 
 PROJECT_DIRECTORY = Path(SPECPATH)
 METADATA = packaging_metadata()
 INPUTS = discover_packaging_inputs(PROJECT_DIRECTORY, collect_all=collect_all)
+MINIMUM_MACOS_VERSION = minimum_macos_version(
+    os.environ.get("PROWRAP_BUILD_HOST_MACOS_VERSION")
+)
 
 
 analysis = Analysis(
@@ -60,7 +68,7 @@ application = BUNDLE(
     bundle_identifier=METADATA["bundle_id"],
     version="1.1",
     info_plist={
-        "LSMinimumSystemVersion": "12.0",
+        "LSMinimumSystemVersion": MINIMUM_MACOS_VERSION,
         "NSHighResolutionCapable": True,
     },
 )
