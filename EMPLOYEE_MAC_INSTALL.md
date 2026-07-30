@@ -1,6 +1,6 @@
 # Install PROWRAP ISO 24817 Calculator on your Mac
 
-This app is for Apple Silicon M4/M5 Macs. It does not run on Intel Macs.
+Before employee installation or manual packaged-app acceptance testing, confirm that the Mac is an Apple Silicon M4/M5 model running macOS 26.5.2 or later. This built release does not run on Intel Macs, and compatibility with older macOS versions is not claimed.
 
 You do not need an internet connection or Python installation. The calculator works offline, and your calculator data stays on your Mac.
 
