@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import atexit
+from queue import Empty, SimpleQueue
 import socket
 import subprocess
 import sys
@@ -65,22 +66,26 @@ def wait_for_streamlit(port: int, timeout_seconds: float = 30.0) -> bool:
 
 def terminate_process(
     process: subprocess.Popen[bytes], timeout_seconds: float = 5.0
-) -> None:
+) -> bool:
     """Stop a child process, escalating only when it ignores termination."""
     if process.poll() is not None:
-        return
+        return True
     try:
         process.terminate()
     except ProcessLookupError:
-        return
+        return True
     try:
         process.wait(timeout=timeout_seconds)
+        return True
     except subprocess.TimeoutExpired:
         try:
             process.kill()
             process.wait(timeout=timeout_seconds)
+            return True
         except ProcessLookupError:
-            return
+            return True
+        except subprocess.TimeoutExpired:
+            return False
 
 
 def streamlit_cli_args(app_path: Path, port: int) -> list[str]:
@@ -128,6 +133,7 @@ class LauncherController:
         port_finder: Callable[[], int] = find_free_loopback_port,
         worker_factory: Callable[[Callable[[], None]], Any] | None = None,
         monitor_worker_factory: Callable[[Callable[[], None]], Any] | None = None,
+        shutdown_worker_factory: Callable[[Callable[[], None]], Any] | None = None,
         register_exit: Callable[[Callable[[], None]], Any] = atexit.register,
     ) -> None:
         self.view = view
@@ -137,6 +143,7 @@ class LauncherController:
         self._port_finder = port_finder
         self._worker_factory = worker_factory or self._background_worker
         self._monitor_worker_factory = monitor_worker_factory or self._background_worker
+        self._shutdown_worker_factory = shutdown_worker_factory or self._background_worker
         self._lock = threading.RLock()
         self.child: Any | None = None
         self.port: int | None = None
@@ -150,10 +157,22 @@ class LauncherController:
         return threading.Thread(target=target, daemon=True)
 
     def _post_status(self, status: str) -> None:
-        self.view.post(lambda: self.view.set_status(status))
+        self._post_if_open(lambda: self.view.set_status(status))
 
     def _post_open_enabled(self, enabled: bool) -> None:
-        self.view.post(lambda: self.view.set_open_enabled(enabled))
+        self._post_if_open(lambda: self.view.set_open_enabled(enabled))
+
+    def _post_if_open(self, callback: Callable[[], None]) -> None:
+        with self._lock:
+            if self._closed:
+                return
+        self.view.post(lambda: self._deliver_if_open(callback))
+
+    def _deliver_if_open(self, callback: Callable[[], None]) -> None:
+        with self._lock:
+            if self._closed:
+                return
+        callback()
 
     def start(self) -> None:
         """Start one local child and begin non-blocking health polling."""
@@ -189,22 +208,25 @@ class LauncherController:
             else:
                 self._ready = False
                 url = None
-                if child is self.child:
-                    self.child = None
 
         if url is not None:
             self._post_status("Ready")
             self._post_open_enabled(True)
-            self._browser_opener(url)
+            self._open_browser_if_ready(child, url)
             monitor = self._monitor_worker_factory(lambda: self._monitor_child(child))
             if monitor is not None:
                 monitor.start()
             return
 
-        if child.poll() is None:
-            terminate_process(child)
+        self._stop_child(child)
         self._post_open_enabled(False)
         self._post_status("Unable to start: the local server did not respond. Please try again.")
+
+    def _open_browser_if_ready(self, child: Any, url: str) -> None:
+        with self._lock:
+            if self._closed or not self._ready or child is not self.child or child.poll() is not None:
+                return
+            self._browser_opener(url)
 
     def _monitor_child(self, child: Any) -> None:
         while child.poll() is None:
@@ -224,20 +246,27 @@ class LauncherController:
     def open_calculator(self) -> None:
         """Open the already-healthy loopback URL without starting another child."""
         with self._lock:
-            if not self._ready or self.child is None or self.child.poll() is not None:
-                return
+            child = self.child
             url = self.url
-        if url is not None:
-            self._browser_opener(url)
+        if child is not None and url is not None:
+            self._open_browser_if_ready(child, url)
 
-    def stop(self) -> None:
-        """Detach and stop the owned child exactly once."""
+    def _stop_child(self, child: Any) -> bool:
+        stopped = terminate_process(child)
+        if stopped:
+            with self._lock:
+                if child is self.child:
+                    self.child = None
+        return stopped
+
+    def stop(self) -> bool:
+        """Stop the owned child, retaining it when kill escalation times out."""
         with self._lock:
             child = self.child
-            self.child = None
             self._ready = False
-        if child is not None:
-            terminate_process(child)
+        if child is None:
+            return True
+        return self._stop_child(child)
 
     def quit(self) -> None:
         """Handle both the Quit button and the window-manager close request."""
@@ -245,8 +274,9 @@ class LauncherController:
             if self._closed:
                 return
             self._closed = True
-        self.stop()
-        self.view.post(self.view.close)
+        self.view.close()
+        worker = self._shutdown_worker_factory(self.stop)
+        worker.start()
 
     def window_closed(self) -> None:
         self.quit()
@@ -261,6 +291,9 @@ class TkLauncherView:
 
         self._tk = tk
         self.root = tk.Tk()
+        self._dispatch_lock = threading.Lock()
+        self._dispatch_queue: SimpleQueue[Callable[[], None]] = SimpleQueue()
+        self._closed = False
         self.root.title("PROWRAP ISO 24817 Calculator")
         self.root.resizable(False, False)
 
@@ -280,9 +313,30 @@ class TkLauncherView:
         self._open_button.configure(command=self.controller.open_calculator)
         self._quit_button.configure(command=self.controller.quit)
         self.root.protocol("WM_DELETE_WINDOW", self.controller.window_closed)
+        self.root.after(20, self._drain_dispatch_queue)
 
     def post(self, callback: Callable[[], None]) -> None:
-        self.root.after(0, callback)
+        with self._dispatch_lock:
+            if self._closed:
+                return
+            self._dispatch_queue.put(callback)
+
+    def _drain_dispatch_queue(self) -> None:
+        with self._dispatch_lock:
+            if self._closed:
+                return
+        while True:
+            try:
+                callback = self._dispatch_queue.get_nowait()
+            except Empty:
+                break
+            with self._dispatch_lock:
+                if self._closed:
+                    return
+            callback()
+        with self._dispatch_lock:
+            if not self._closed:
+                self.root.after(20, self._drain_dispatch_queue)
 
     def set_status(self, status: str) -> None:
         self._status.set(status)
@@ -291,6 +345,10 @@ class TkLauncherView:
         self._open_button.configure(state=self._tk.NORMAL if enabled else self._tk.DISABLED)
 
     def close(self) -> None:
+        with self._dispatch_lock:
+            if self._closed:
+                return
+            self._closed = True
         self.root.destroy()
 
     def run(self) -> None:
