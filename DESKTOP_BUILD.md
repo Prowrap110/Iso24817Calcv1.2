@@ -5,7 +5,7 @@ This guide is for the maintainer creating the employee macOS release. The releas
 ## Prerequisites
 
 - A macOS build host running natively on Apple Silicon (`uname -m` and the selected Python must both report `arm64`).
-- A checkout of this repository, with `python3`, `venv`, and `pip` available. The first build needs access to the package indexes to create `.venv-desktop` and install the dependencies in `requirements-desktop.txt`.
+- A checkout of this repository, with `python3`, `venv`, and `pip` available. Builds normally require package access on every run: the script upgrades `pip`, `setuptools`, and `wheel`, then installs `requirements-desktop.txt`. A build can run without external package access only when the needed packages are already available through a local cache or package index.
 - Sufficient local disk space for the virtual environment and the generated `build/`, `dist/`, and `release/` folders.
 
 Build on the macOS release you intend to support. The build script writes the actual build host's macOS version to `LSMinimumSystemVersion`; consequently, that release supports the build-host macOS release and later. It is not a claim of compatibility with older macOS releases.
