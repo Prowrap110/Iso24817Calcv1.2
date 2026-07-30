@@ -201,6 +201,20 @@ def _validate_inputs(
         raise ValueError("\n".join(errors))
 
 
+def calculate_band_procurement(repair_length_mm, cloth_width_mm, overlap_mm):
+    """Return axial band count and untrimmed cloth length for a repair."""
+    if cloth_width_mm <= overlap_mm:
+        raise ValueError(
+            "Prowrap CF cloth width must exceed the 50 mm stitch overlap."
+        )
+    if repair_length_mm <= cloth_width_mm:
+        return 1, cloth_width_mm
+    num_bands = math.ceil(
+        (repair_length_mm - cloth_width_mm) / (cloth_width_mm - overlap_mm)
+    ) + 1
+    return num_bands, num_bands * cloth_width_mm
+
+
 def iso_type_b_min_thickness(
     pressure_mpa,
     od_mm,
@@ -306,6 +320,7 @@ def calculate_repair(
     component_type="Straight",
     cyclic_derating_factor=1.0,
     axial_load_case=0,
+    cloth_width_mm=PROWRAP["cloth_width_mm"],
 ):
     """Calculate repair outputs (baseline route).
 
@@ -344,6 +359,12 @@ def calculate_repair(
             "or equal to 1."
         )
     baseline_component_factor(component_type)  # validates component type
+    cloth_width_mm = float(cloth_width_mm)
+    stitching_overlap_mm = PROWRAP["stitching_overlap_mm"]
+    if cloth_width_mm <= stitching_overlap_mm:
+        raise ValueError(
+            "Prowrap CF cloth width must exceed the 50 mm stitch overlap."
+        )
 
     wall_loss_ratio = (wall - rem_wall) / wall
 
@@ -508,12 +529,9 @@ def calculate_repair(
     taper_length = 5.0 * final_thickness
     total_repair_length_calc = length + (2 * overlap_length) + (2 * taper_length)
 
-    if total_repair_length_calc <= PROWRAP["cloth_width_mm"]:
-        num_bands = 1
-        procurement_axial_length = 300
-    else:
-        num_bands = math.ceil((total_repair_length_calc - 300) / 250) + 1
-        procurement_axial_length = num_bands * 300
+    num_bands, procurement_axial_length = calculate_band_procurement(
+        total_repair_length_calc, cloth_width_mm, stitching_overlap_mm
+    )
 
     circumference_m = (math.pi * od) / 1000
     axial_procurement_m = procurement_axial_length / 1000
@@ -665,6 +683,7 @@ def calculate_repair(
         "sf": safety_factor,
         "design_factor": design_factor,
         "design_life": design_life,
+        "cloth_width_mm": cloth_width_mm,
         "optimized_sqm": optimized_sqm,
         "epoxy_kg": epoxy_kg,
         "is_upgraded": is_upgraded,
@@ -757,7 +776,11 @@ def substrate_credit_bar_for_iso_check(repair_data):
     return max(0.0, repair_data["p_steel_capacity"] * 10.0)
 
 
-def apply_type_a_class3_result_to_repair(repair_data, typea_class3_result):
+def apply_type_a_class3_result_to_repair(
+    repair_data,
+    typea_class3_result,
+    cloth_width_mm=None,
+):
     """Use the ISO Type A/Class 3 result as the controlling displayed repair design."""
     updated = dict(repair_data)
     updated["iso_typea_class3"] = typea_class3_result
@@ -777,15 +800,12 @@ def apply_type_a_class3_result_to_repair(repair_data, typea_class3_result):
     # Formula (20): total length = defect + 2*overlap + 2*taper.
     repair_length = updated["length"] + (2.0 * overlap_length) + (2.0 * taper_length)
 
-    if repair_length <= PROWRAP["cloth_width_mm"]:
-        num_bands = 1
-        procurement_axial_length = PROWRAP["cloth_width_mm"]
-    else:
-        num_bands = math.ceil(
-            (repair_length - PROWRAP["cloth_width_mm"])
-            / (PROWRAP["cloth_width_mm"] - PROWRAP["stitching_overlap_mm"])
-        ) + 1
-        procurement_axial_length = num_bands * PROWRAP["cloth_width_mm"]
+    if cloth_width_mm is None:
+        cloth_width_mm = updated.get("cloth_width_mm", PROWRAP["cloth_width_mm"])
+    cloth_width_mm = float(cloth_width_mm)
+    num_bands, procurement_axial_length = calculate_band_procurement(
+        repair_length, cloth_width_mm, PROWRAP["stitching_overlap_mm"]
+    )
 
     circumference_m = (math.pi * updated["od"]) / 1000.0
     axial_procurement_m = procurement_axial_length / 1000.0
@@ -807,6 +827,7 @@ def apply_type_a_class3_result_to_repair(repair_data, typea_class3_result):
             "proc_length": procurement_axial_length,
             "optimized_sqm": optimized_sqm,
             "epoxy_kg": optimized_sqm * 1.2,
+            "cloth_width_mm": cloth_width_mm,
             "is_upgraded": False,
         }
     )

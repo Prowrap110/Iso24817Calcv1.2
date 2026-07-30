@@ -8,6 +8,12 @@ from prowrap_calculations import (
     substrate_credit_bar_for_iso_check,
 )
 from prowrap_materials import PROWRAP
+from calculator_form import (
+    NEUTRAL_CHOICE,
+    initialise_inputs,
+    inputs_are_complete,
+    new_calculation,
+)
 
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(
@@ -96,7 +102,7 @@ def create_pdf(report_data):
     pdf.ln(3)
 
     add_section("4. Material Procurement", {
-        "Fabric Needed (300mm Roll)": f"{report_data['optimized_sqm']:.2f} sqm",
+        "Fabric Needed": f"{report_data['optimized_sqm']:.2f} sqm ({report_data['cloth_width_mm']:g} mm cloth)",
         "Epoxy Required": f"{report_data['epoxy_kg']:.1f} kg"
     })
 
@@ -110,7 +116,7 @@ def create_pdf(report_data):
         "1. Surface Prep: Grit blast to SA 2.5; Profile >60 microns.",
         "2. Primer/Filler: Apply Prowrap Filler to defect area to restore OD.",
         f"3. Lamination: Saturate Carbon Cloth. Apply {report_data['num_plies']} layers per band.",
-        f"4. Wrapping: Use {report_data['num_bands']} band(s) of 300mm cloth.",
+        f"4. Wrapping: Use {report_data['num_bands']} band(s) of {report_data['cloth_width_mm']:g} mm cloth.",
         f"5. Quality Control: Minimum average Shore D hardness of {PROWRAP['shore_d_min']} required."
     ]
     
@@ -151,6 +157,7 @@ def run_calculation(
     cyclic_derating_factor=1.0,
     internal_corrosion_rate=0.0,
     axial_load_case=0,
+    cloth_width_mm=PROWRAP["cloth_width_mm"],
 ):
     try:
         report_data = calculate_repair(
@@ -174,6 +181,7 @@ def run_calculation(
             component_type=component_type,
             cyclic_derating_factor=cyclic_derating_factor,
             axial_load_case=axial_load_case,
+            cloth_width_mm=cloth_width_mm,
         )
     except ValueError as exc:
         for err in str(exc).splitlines():
@@ -221,7 +229,9 @@ def run_calculation(
             )
 
     if typea_class3_result:
-        report_data = apply_type_a_class3_result_to_repair(report_data, typea_class3_result)
+        report_data = apply_type_a_class3_result_to_repair(
+            report_data, typea_class3_result, cloth_width_mm=cloth_width_mm
+        )
         num_plies = report_data["num_plies"]
         final_thickness = report_data["final_thickness"]
         total_repair_length_calc = report_data["iso_length"]
@@ -229,7 +239,8 @@ def run_calculation(
         optimized_sqm = report_data["optimized_sqm"]
         epoxy_kg = report_data["epoxy_kg"]
         is_upgraded = report_data["is_upgraded"]
-        num_bands = report_data["num_bands"]
+    num_bands = report_data["num_bands"]
+    cloth_width_mm = report_data["cloth_width_mm"]
 
     st.success(f"✅ Calculation Complete")
 
@@ -365,7 +376,7 @@ def run_calculation(
             st.markdown(f"""
             - **Total Plies:** {num_plies} Layers
             - **Req. Length (ISO):** {total_repair_length_calc:.0f} mm
-            - **Axial Band(s):** {num_bands} x 300mm
+            - **Axial Band(s):** {num_bands} x {cloth_width_mm:g} mm
             - **Procurement Len:** {procurement_axial_length} mm
             - **Epoxy Total:** {epoxy_kg:.1f} kg
             """)
@@ -378,7 +389,7 @@ def run_calculation(
         1. **Surface Prep:** Grit blast to **SA 2.5**; Profile **>60µm**.
         2. **Primer/Filler:** Apply Prowrap Filler to defect area to restore OD.
         3. **Lamination:** Saturate Carbon Cloth. Apply **{num_plies} layers** per band.
-        4. **Wrapping:** Use **{num_bands} band(s)** of 300mm cloth.
+        4. **Wrapping:** Use **{num_bands} band(s)** of {cloth_width_mm:g} mm cloth.
         5. **Quality Control:** Minimum average Shore D hardness of **{PROWRAP['shore_d_min']}** required.
         """)
 
@@ -406,53 +417,64 @@ def main():
         st.session_state.calc_active = False
     if 'force_3_layers' not in st.session_state:
         st.session_state.force_3_layers = False
+    initialise_inputs(st.session_state)
 
     try:
         st.title("🔧 Prowrap Repair Master Calculator")
         st.markdown(f"**Basis:** Preliminary ISO 24817 / ASME PCC-2 screening estimate | **T-Limit:** {PROWRAP['max_temp']}°C")
         
         st.sidebar.header("1. Project Info")
-        customer = st.sidebar.text_input("Customer", value="PROTAP", on_change=reset_calc)
-        location = st.sidebar.text_input("Location", value="Turkey", on_change=reset_calc)
-        report_no = st.sidebar.text_input("Report No", value="24-152", on_change=reset_calc)
+        if st.sidebar.button("New / Clear Calculation", on_click=lambda: new_calculation(st.session_state), use_container_width=True):
+            st.rerun()
+        customer = st.sidebar.text_input("Customer", key="customer", on_change=reset_calc)
+        location = st.sidebar.text_input("Location", key="location", on_change=reset_calc)
+        report_no = st.sidebar.text_input("Report No", key="report_no", on_change=reset_calc)
         
         st.sidebar.header("2. Pipeline Data")
-        od = st.sidebar.number_input("Pipe OD [mm]", value=457.2, on_change=reset_calc)
-        wall = st.sidebar.number_input("Nominal Wall [mm]", value=9.53, on_change=reset_calc)
-        yield_str = st.sidebar.number_input("Pipe Yield [MPa]", value=359.0, on_change=reset_calc)
+        od = st.sidebar.number_input("Pipe OD [mm]", key="od", on_change=reset_calc)
+        wall = st.sidebar.number_input("Nominal Wall [mm]", key="wall", on_change=reset_calc)
+        yield_str = st.sidebar.number_input("Pipe Yield [MPa]", key="yield_str", on_change=reset_calc)
         
         st.sidebar.header("3. Service Conditions")
-        pres = st.sidebar.number_input("Design Pressure [bar]", value=50.0, on_change=reset_calc)
-        temp = st.sidebar.number_input("Op. Temperature [°C]", value=40.0, on_change=reset_calc)
+        pres = st.sidebar.number_input("Design Pressure [bar]", key="pres", on_change=reset_calc)
+        temp = st.sidebar.number_input("Op. Temperature [°C]", key="temp", on_change=reset_calc)
         
         st.sidebar.header("4. Defect Data")
-        type_ = st.sidebar.selectbox("Mechanism", ["Corrosion", "Dent", "Leak", "Crack"], on_change=reset_calc)
-        loc_ = st.sidebar.selectbox("Location", ["External", "Internal"], on_change=reset_calc)
-        len_ = st.sidebar.number_input("Defect Length [mm]", value=100.0, on_change=reset_calc)
-        rem_ = st.sidebar.number_input("Remaining Wall [mm]", value=4.5, on_change=reset_calc)
-        corr_rate = 0.0
+        type_ = st.sidebar.selectbox("Mechanism", [NEUTRAL_CHOICE, "Corrosion", "Dent", "Leak", "Crack"], key="type_", on_change=reset_calc)
+        loc_ = st.sidebar.selectbox("Location", [NEUTRAL_CHOICE, "External", "Internal"], key="loc_", on_change=reset_calc)
+        len_ = st.sidebar.number_input("Defect Length [mm]", key="len_", on_change=reset_calc)
+        rem_ = st.sidebar.number_input("Remaining Wall [mm]", key="rem_", on_change=reset_calc)
+        corr_rate = st.session_state.corr_rate
         if loc_ == "Internal" and type_ == "Corrosion":
             corr_rate = st.sidebar.number_input(
-                "Internal Corrosion Rate [mm/yr]", value=0.0, min_value=0.0,
+                "Internal Corrosion Rate [mm/yr]", min_value=0.0, key="corr_rate",
                 step=0.05, on_change=reset_calc,
                 help="Post-repair growth of internal corrosion; used to project the remaining wall to end of design life. External defects are sealed by the repair (rate 0).")
         
         st.sidebar.header("5. Safety & Design Settings")
-        design_life = st.sidebar.number_input("Design Life [years]", value=20, min_value=1, on_change=reset_calc)
-        df = st.sidebar.number_input("Design Factor (f)", value=0.72, min_value=0.1, max_value=1.0, on_change=reset_calc)
+        design_life = st.sidebar.number_input("Design Life [years]", min_value=1, key="design_life", on_change=reset_calc)
+        df = st.sidebar.number_input("Design Factor (f)", min_value=0.1, max_value=1.0, key="df", on_change=reset_calc)
 
         st.sidebar.header("6. Installation & Load Conditions")
         st.sidebar.caption("These inputs feed the baseline design (thermal mismatch, component factor f_th, cyclic derating, Formula 4 axial loads) and the ISO Type A / Class 3 check.")
-        show_typea_class3_check = st.sidebar.checkbox("Show Type A / Class 3 check", value=True, on_change=reset_calc)
+        show_typea_class3_check = st.sidebar.checkbox("Show Type A / Class 3 check", key="show_typea_class3_check", on_change=reset_calc)
         st.sidebar.caption("For external corrosion/dent defects, substrate credit is automatically taken from effective pipe capacity.")
-        installation_temp = st.sidebar.number_input("Installation temperature [°C]", value=20.0, on_change=reset_calc)
-        component_type = st.sidebar.selectbox("Component type", ["Straight", "Bend", "Tee", "Flange", "Reducer"], on_change=reset_calc)
-        cyclic_derating_factor = st.sidebar.number_input("Cyclic derating factor", value=1.0, min_value=0.01, max_value=1.0, on_change=reset_calc)
+        installation_temp = st.sidebar.number_input("Installation temperature [°C]", key="installation_temp", on_change=reset_calc)
+        component_type = st.sidebar.selectbox("Component type", [NEUTRAL_CHOICE, "Straight", "Bend", "Tee", "Flange", "Reducer"], key="component_type", on_change=reset_calc)
+        cyclic_derating_factor = st.sidebar.number_input("Cyclic derating factor", min_value=0.01, max_value=1.0, key="cyclic_derating_factor", on_change=reset_calc)
         axial_load_case = st.sidebar.selectbox(
-            "Axial load case", [0, 1], on_change=reset_calc,
+            "Axial load case", [NEUTRAL_CHOICE, 0, 1], key="axial_load_case", on_change=reset_calc,
             help="1 = severed-pipe/guillotine load credible, or above-ground pipeline near bends/closures: axial loads calculated per ISO Formula 4. 0 = buried restrained pipeline: axial loads not taken into account.")
         
-        if st.sidebar.button("Calculate & Optimize", type="primary"):
+        cloth_width_mm = st.sidebar.number_input(
+            "Prowrap CF cloth band width [mm]", min_value=0.0,
+            key="cloth_width_mm", on_change=reset_calc,
+            help="Installation/procurement width. It must be greater than the fixed 50 mm inter-band stitch overlap and be an approved Prowrap cloth width.",
+        )
+        form_ready = inputs_are_complete(st.session_state)
+        if not form_ready:
+            st.sidebar.caption("Enter all required fields to enable calculation.")
+        if st.sidebar.button("Calculate & Optimize", type="primary", disabled=not form_ready):
             st.session_state.calc_active = True
             st.session_state.force_3_layers = False
             
@@ -478,6 +500,7 @@ def main():
                 cyclic_derating_factor,
                 corr_rate,
                 axial_load_case,
+                cloth_width_mm,
             )
             
     except Exception as e:
