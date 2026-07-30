@@ -56,3 +56,9 @@ def inputs_are_complete(values):
     if values.get("type_") == "Corrosion" and values.get("loc_") == "Internal":
         return values.get("corr_rate") is not None
     return True
+
+
+def calculation_corrosion_rate(values):
+    """Provide zero post-repair corrosion growth when the optional input is absent."""
+    value = values.get("corr_rate")
+    return 0.0 if value is None else value

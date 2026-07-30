@@ -10,6 +10,7 @@ from prowrap_calculations import (
 from prowrap_materials import PROWRAP
 from calculator_form import (
     NEUTRAL_CHOICE,
+    calculation_corrosion_rate,
     initialise_inputs,
     inputs_are_complete,
     new_calculation,
@@ -444,7 +445,7 @@ def main():
         loc_ = st.sidebar.selectbox("Location", [NEUTRAL_CHOICE, "External", "Internal"], key="loc_", on_change=reset_calc)
         len_ = st.sidebar.number_input("Defect Length [mm]", key="len_", on_change=reset_calc)
         rem_ = st.sidebar.number_input("Remaining Wall [mm]", key="rem_", on_change=reset_calc)
-        corr_rate = st.session_state.corr_rate
+        corr_rate = calculation_corrosion_rate(st.session_state)
         if loc_ == "Internal" and type_ == "Corrosion":
             corr_rate = st.sidebar.number_input(
                 "Internal Corrosion Rate [mm/yr]", min_value=0.0, key="corr_rate",

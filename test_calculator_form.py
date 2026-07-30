@@ -1,6 +1,11 @@
 import unittest
 
-from calculator_form import INPUT_DEFAULTS, inputs_are_complete, new_calculation
+from calculator_form import (
+    INPUT_DEFAULTS,
+    calculation_corrosion_rate,
+    inputs_are_complete,
+    new_calculation,
+)
 
 
 class CalculatorFormTest(unittest.TestCase):
@@ -65,6 +70,12 @@ class CalculatorFormTest(unittest.TestCase):
         self.assertFalse(inputs_are_complete(values))
         values["corr_rate"] = 0.0
         self.assertTrue(inputs_are_complete(values))
+
+    def test_non_internal_corrosion_uses_zero_rate_when_field_is_blank(self):
+        values = dict(INPUT_DEFAULTS)
+        values.update({"type_": "Corrosion", "loc_": "External"})
+
+        self.assertEqual(calculation_corrosion_rate(values), 0.0)
 
 
 if __name__ == "__main__":
