@@ -183,6 +183,11 @@ class DesktopLauncherPathAndArgumentsTest(unittest.TestCase):
         self.assertNotIn("--server.enableCORS=false", arguments)
         self.assertNotIn("--server.enableXsrfProtection=false", arguments)
 
+    def test_streamlit_child_args_disable_development_mode_for_dynamic_port(self):
+        arguments = streamlit_child_args(Path("/bundle/PWR110Calculator.py"), 8765)
+
+        self.assertIn("--global.developmentMode=false", arguments)
+
 
 class DesktopLauncherLifecycleTest(unittest.TestCase):
     def test_wait_for_streamlit_returns_true_when_health_endpoint_is_ready(self):
@@ -561,7 +566,12 @@ class DesktopLauncherEntryPointTest(unittest.TestCase):
 
             self.assertEqual(result, 0)
             self.assertEqual(sys.argv[0], "streamlit")
-            self.assertEqual(sys.argv[1:4], ["run", str(bundled_path("PWR110Calculator.py")), "--server.address=127.0.0.1"])
+            self.assertEqual(
+                sys.argv[1:3],
+                ["run", str(bundled_path("PWR110Calculator.py"))],
+            )
+            self.assertIn("--global.developmentMode=false", sys.argv)
+            self.assertIn("--server.address=127.0.0.1", sys.argv)
             self.assertIn("--server.port=45678", sys.argv)
             streamlit_main.assert_called_once()
         finally:
