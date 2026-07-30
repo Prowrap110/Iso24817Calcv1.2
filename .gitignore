@@ -2,3 +2,7 @@ __pycache__/
 *.py[cod]
 .venv/
 iso24817calc-venv/
+.venv-desktop/
+build/
+dist/
+release/
