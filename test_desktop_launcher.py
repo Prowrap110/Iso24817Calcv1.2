@@ -1,6 +1,7 @@
 import sys
 import subprocess
 import unittest
+from collections.abc import Callable
 from urllib import error
 from pathlib import Path
 from unittest import mock
@@ -9,6 +10,8 @@ from desktop_launcher import (
     build_local_url,
     bundled_path,
     find_free_loopback_port,
+    LauncherController,
+    main,
     streamlit_child_args,
     terminate_process,
     wait_for_streamlit,
@@ -39,12 +42,14 @@ class ProcessDouble:
         self.exit_code = exit_code
         self.wait_results = list(wait_results or [])
         self.terminated = False
+        self.terminate_calls = 0
         self.killed = False
 
     def poll(self) -> int | None:
         return self.exit_code
 
     def terminate(self) -> None:
+        self.terminate_calls += 1
         self.terminated = True
 
     def kill(self) -> None:
@@ -56,6 +61,48 @@ class ProcessDouble:
             raise outcome
         self.exit_code = int(outcome)
         return self.exit_code
+
+
+class ProcessThatExitsDuringTermination(ProcessDouble):
+    def terminate(self) -> None:
+        raise ProcessLookupError("child already exited")
+
+
+class LauncherViewDouble:
+    """Synchronous stand-in for the Tk view's main-loop dispatcher."""
+
+    def __init__(self) -> None:
+        self.statuses: list[str] = []
+        self.open_enabled: list[bool] = []
+        self.close_calls = 0
+
+    def post(self, callback: Callable[[], None]) -> None:
+        callback()
+
+    def set_status(self, status: str) -> None:
+        self.statuses.append(status)
+
+    def set_open_enabled(self, enabled: bool) -> None:
+        self.open_enabled.append(enabled)
+
+    def close(self) -> None:
+        self.close_calls += 1
+
+
+class ImmediateWorker:
+    def __init__(self, target: Callable[[], None]) -> None:
+        self.target = target
+
+    def start(self) -> None:
+        self.target()
+
+
+class DeferredWorker:
+    def __init__(self, target: Callable[[], None]) -> None:
+        self.target = target
+
+    def start(self) -> None:
+        pass
 
 
 class DesktopLauncherPathAndArgumentsTest(unittest.TestCase):
@@ -175,6 +222,162 @@ class DesktopLauncherLifecycleTest(unittest.TestCase):
         self.assertTrue(process.terminated)
         self.assertTrue(process.killed)
         self.assertEqual(process.exit_code, 0)
+
+    def test_terminate_process_ignores_child_exit_race_during_termination(self):
+        process = ProcessThatExitsDuringTermination(exit_code=None)
+
+        terminate_process(process)
+
+        self.assertFalse(process.killed)
+
+
+class DesktopLauncherControllerTest(unittest.TestCase):
+    def make_controller(
+        self,
+        *,
+        process: ProcessDouble | None = None,
+        healthy: bool = True,
+        browser_opener: mock.Mock | None = None,
+    ) -> tuple[LauncherController, LauncherViewDouble, mock.Mock]:
+        view = LauncherViewDouble()
+        popen = mock.Mock(return_value=process or ProcessDouble(exit_code=None))
+        controller = LauncherController(
+            view,
+            popen=popen,
+            wait_for_health=lambda _port: healthy,
+            browser_opener=browser_opener or mock.Mock(),
+            port_finder=lambda: 45678,
+            worker_factory=ImmediateWorker,
+            monitor_worker_factory=lambda _target: None,
+        )
+        return controller, view, popen
+
+    def test_start_uses_frozen_executable_and_streamlit_child_sentinel(self):
+        controller, _view, popen = self.make_controller()
+
+        with (
+            mock.patch.object(sys, "frozen", True, create=True),
+            mock.patch.object(sys, "executable", "/Applications/PROWRAP Calculator"),
+        ):
+            controller.start()
+
+        command = popen.call_args.args[0]
+        self.assertEqual(command, ["/Applications/PROWRAP Calculator", "--streamlit-child", "--port", "45678"])
+        self.assertFalse(popen.call_args.kwargs["shell"])
+
+    def test_start_uses_source_script_for_source_mode_child(self):
+        controller, _view, popen = self.make_controller()
+
+        with (
+            mock.patch.dict(sys.__dict__, {}, clear=False),
+            mock.patch.object(sys, "executable", "/usr/bin/python3"),
+        ):
+            sys.__dict__.pop("frozen", None)
+            controller.start()
+
+        command = popen.call_args.args[0]
+        self.assertEqual(
+            command,
+            ["/usr/bin/python3", str(Path(__file__).with_name("desktop_launcher.py")), "--streamlit-child", "--port", "45678"],
+        )
+
+    def test_healthy_start_marks_ready_then_opens_browser_once(self):
+        browser_opener = mock.Mock()
+        controller, view, _popen = self.make_controller(browser_opener=browser_opener)
+
+        controller.start()
+
+        self.assertEqual(view.statuses[-1], "Ready")
+        self.assertTrue(view.open_enabled[-1])
+        browser_opener.assert_called_once_with("http://127.0.0.1:45678")
+
+    def test_open_calculator_reuses_healthy_server_without_second_child(self):
+        browser_opener = mock.Mock()
+        controller, _view, popen = self.make_controller(browser_opener=browser_opener)
+        controller.start()
+
+        controller.open_calculator()
+
+        self.assertEqual(popen.call_count, 1)
+        self.assertEqual(browser_opener.call_count, 2)
+
+    def test_startup_timeout_reports_actionable_error_and_stops_child(self):
+        process = ProcessDouble(exit_code=None)
+        controller, view, _popen = self.make_controller(process=process, healthy=False)
+
+        controller.start()
+
+        self.assertIn("Unable to start", view.statuses[-1])
+        self.assertIn("try again", view.statuses[-1])
+        self.assertFalse(view.open_enabled[-1])
+        self.assertTrue(process.terminated)
+
+    def test_quit_and_window_close_stop_the_child_only_once(self):
+        process = ProcessDouble(exit_code=None)
+        controller, view, _popen = self.make_controller(process=process)
+        controller.start()
+
+        controller.quit()
+        controller.window_closed()
+
+        self.assertTrue(process.terminated)
+        self.assertEqual(process.terminate_calls, 1)
+        self.assertEqual(view.close_calls, 1)
+
+    def test_unexpected_child_exit_disables_launcher_without_zombie(self):
+        process = ProcessDouble(exit_code=None)
+        controller, view, _popen = self.make_controller(process=process)
+        controller.start()
+        process.exit_code = 1
+
+        controller.handle_child_exit(process)
+
+        self.assertIn("stopped unexpectedly", view.statuses[-1])
+        self.assertFalse(view.open_enabled[-1])
+        self.assertIsNone(controller.child)
+
+    def test_quit_suppresses_ui_updates_from_a_late_health_worker(self):
+        view = LauncherViewDouble()
+        worker: DeferredWorker | None = None
+
+        def make_worker(target: Callable[[], None]) -> DeferredWorker:
+            nonlocal worker
+            worker = DeferredWorker(target)
+            return worker
+
+        controller = LauncherController(
+            view,
+            popen=mock.Mock(return_value=ProcessDouble(exit_code=None)),
+            wait_for_health=lambda _port: False,
+            port_finder=lambda: 45678,
+            worker_factory=make_worker,
+            monitor_worker_factory=lambda _target: None,
+        )
+        controller.start()
+        controller.quit()
+        statuses_after_quit = list(view.statuses)
+
+        assert worker is not None
+        worker.target()
+
+        self.assertEqual(view.statuses, statuses_after_quit)
+
+
+class DesktopLauncherEntryPointTest(unittest.TestCase):
+    def test_child_mode_runs_streamlit_cli_with_local_options(self):
+        original_argv = sys.argv
+        streamlit_main = mock.Mock(return_value=0)
+        try:
+            with mock.patch("desktop_launcher.invoke_streamlit_cli", streamlit_main):
+                result = main(["--streamlit-child", "--port", "45678"])
+
+            self.assertEqual(result, 0)
+            self.assertEqual(sys.argv[0], "streamlit")
+            self.assertEqual(sys.argv[1:4], ["run", str(bundled_path("PWR110Calculator.py")), "--server.address=127.0.0.1"])
+            self.assertIn("--server.port=45678", sys.argv)
+            streamlit_main.assert_called_once()
+        finally:
+            sys.argv = original_argv
 
 
 if __name__ == "__main__":
