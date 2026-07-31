@@ -12,7 +12,7 @@ from calculator_form import (
     NEUTRAL_CHOICE,
     calculation_corrosion_rate,
     initialise_inputs,
-    inputs_are_complete,
+    missing_required_fields,
     new_calculation,
 )
 
@@ -472,12 +472,23 @@ def main():
             key="cloth_width_mm", on_change=reset_calc,
             help="Installation/procurement width. It must be greater than the fixed 50 mm inter-band stitch overlap and be an approved Prowrap cloth width.",
         )
-        form_ready = inputs_are_complete(st.session_state)
-        if not form_ready:
-            st.sidebar.caption("Enter all required fields to enable calculation.")
-        if st.sidebar.button("Calculate & Optimize", type="primary", disabled=not form_ready):
-            st.session_state.calc_active = True
-            st.session_state.force_3_layers = False
+        missing_fields = missing_required_fields(st.session_state)
+        form_ready = not missing_fields
+        st.sidebar.caption(
+            "After entering the last value, press Enter or Tab to apply it before calculating."
+        )
+        if st.sidebar.button(
+            "Calculate & Optimize",
+            type="primary" if form_ready else "secondary",
+        ):
+            if missing_fields:
+                st.session_state.calc_active = False
+                st.sidebar.error(
+                    f"Missing required fields: {', '.join(missing_fields)}."
+                )
+            else:
+                st.session_state.calc_active = True
+                st.session_state.force_3_layers = False
             
         if st.session_state.calc_active:
             run_calculation(
