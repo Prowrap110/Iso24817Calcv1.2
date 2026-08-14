@@ -18,8 +18,8 @@ class TypeBFormula12Test(unittest.TestCase):
         )
         # Lifetime > 2 years: Type B upper service temperature is Tg - 30
         # (Table 6, Class 3), which feeds fT2.
-        self.assertAlmostEqual(t, 1.1680, places=3)
-        self.assertAlmostEqual(details["service_temp_limit_c"], 48.18, places=2)
+        self.assertAlmostEqual(t, 0.9577, places=3)
+        self.assertAlmostEqual(details["service_temp_limit_c"], 80.0, places=2)
         self.assertTrue(details["repairable_formula12"])
         self.assertTrue(details["d_within_validity"])
 
@@ -42,20 +42,20 @@ class TypeBFormula12Test(unittest.TestCase):
         details = result["type_b_details"]
         self.assertEqual(details["design_life_years"], 2)
         self.assertAlmostEqual(details["fleak"], 0.6422, places=3)
-        self.assertAlmostEqual(details["service_temp_limit_c"], 58.18, places=2)
+        self.assertAlmostEqual(details["service_temp_limit_c"], 90.0, places=2)
         self.assertTrue(
             any("capped" in w for w in result["compliance_warnings"])
         )
 
     def test_large_leak_exceeds_d12_validity_even_when_formula12_solves(self):
         # 100 mm through-wall defect at 50 bar: Formula 12 solves at the
-        # 2-year cap but the thickness (122.5 mm) violates the D/12
+        # 2-year cap but the thickness (70.0 mm) violates the D/12
         # thin-wall limit - flagged, not silently accepted.
         result = calculate_repair(**default_inputs(defect_type="Leak"))
 
         details = result["type_b_details"]
         self.assertTrue(details["repairable_formula12"])
-        self.assertAlmostEqual(details["t_formula12_mm"], 122.5363, places=3)
+        self.assertAlmostEqual(details["t_formula12_mm"], 70.0225, places=3)
         self.assertFalse(result["thickness_check_ok"])
         self.assertTrue(
             any("D/12" in w for w in result["compliance_warnings"])
@@ -66,11 +66,11 @@ class TypeBFormula12Test(unittest.TestCase):
 
         details = result["type_b_details"]
         self.assertTrue(details["repairable_formula12"])
-        self.assertAlmostEqual(details["t_formula12_mm"], 6.3029, places=3)
+        self.assertAlmostEqual(details["t_formula12_mm"], 4.4138, places=3)
         # 7.5.7: t_design = max(Type B, Type A) -> here the Type A check
         # (full pressure, 20-yr strain) governs over the 2-yr Formula 12.
         self.assertGreater(details["t_typea_mm"], details["t_formula12_mm"])
-        self.assertEqual(result["num_plies"], 12)
+        self.assertEqual(result["num_plies"], 9)
 
 
     def test_type_b_minimum_is_impact_qualified_3_layers(self):

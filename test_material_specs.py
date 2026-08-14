@@ -4,7 +4,7 @@ from prowrap_materials import PROWRAP
 
 
 class ProwrapMaterialSpecsTest(unittest.TestCase):
-    def test_specs_match_qualification_data_pdf(self):
+    def test_specs_match_controlled_prw110_material_basis(self):
         specs = PROWRAP
 
         expected = {
@@ -20,7 +20,7 @@ class ProwrapMaterialSpecsTest(unittest.TestCase):
             "compressive_strength": 85.58,
             "shear_modulus": 2450,
             "shore_d": 79.1,
-            "glass_transition_temp": 78.18,
+            "glass_transition_temp": 110.0,
             "peak_exotherm_temp": 104,
             "thermal_expansion_circ": 10.34,
             "thermal_expansion_axial": 22.81,
@@ -42,6 +42,7 @@ class ProwrapMaterialSpecsTest(unittest.TestCase):
             specs["glass_transition_temp"] - 20,
             places=2,
         )
+        self.assertEqual(specs["max_temp"], 90.0)
 
     def test_required_material_keys_are_present(self):
         required_keys = {

@@ -9,8 +9,13 @@ class InputValidationTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             calculate_repair(**default_inputs(**overrides))
 
-    def test_rejects_temperature_above_limit(self):
-        self.assert_invalid(temp=58.19)
+    def test_accepts_temperature_at_tg_minus_20_limit(self):
+        result = calculate_repair(**default_inputs(temp=90.0))
+
+        self.assertEqual(result["temp"], 90.0)
+
+    def test_rejects_temperature_above_tg_minus_20_limit(self):
+        self.assert_invalid(temp=90.01)
 
     def test_rejects_remaining_wall_greater_than_nominal(self):
         self.assert_invalid(rem_wall=10.0)

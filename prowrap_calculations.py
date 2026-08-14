@@ -473,7 +473,7 @@ def calculate_repair(
     # take the maximum thickness.
     type_b_details = None
     if "Type B" in calc_method_thick and pressure_mpa > 0:
-        # Type B service life is capped (5 years for PRW110); the repair
+        # Type B service life is capped (2 years for PRW110); the repair
         # must be revalidated or replaced beyond that.
         type_b_life = min(design_life, PROWRAP["type_b_max_life_years"])
         t_type_b, type_b_details = iso_type_b_min_thickness(
