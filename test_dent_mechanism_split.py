@@ -68,13 +68,44 @@ def test_external_dent_no_crack_uses_component_pipe_load_sharing():
     )
 
 
-@pytest.mark.parametrize("mechanism", ["Dent w/crack", "Dent no-crack"])
+@pytest.mark.parametrize(
+    ("raw_location", "canonical_location", "expected_method", "expected_credit"),
+    [
+        (
+            " External ",
+            "External",
+            "Type A (Dent Reinforcement)",
+            10.775653543307088,
+        ),
+        (" Internal ", "Internal", "Type B (Total Replacement)", 0.0),
+    ],
+)
+def test_dent_location_whitespace_is_normalized_before_routing(
+    raw_location, canonical_location, expected_method, expected_credit,
+):
+    result = calculate_repair(**default_inputs(
+        defect_type="Dent no-crack",
+        defect_loc=raw_location,
+        rem_wall=9.53,
+    ))
+    assert result["defect_loc"] == canonical_location
+    assert result["calc_method_thick"] == expected_method
+    assert result["p_steel_capacity"] == pytest.approx(expected_credit)
+
+
+@pytest.mark.parametrize(
+    ("mechanism", "expected_basis"),
+    [
+        ("Dent w/crack", "Dent w/crack - full-pressure laminate"),
+        ("Dent no-crack", "Dent no-crack - substrate load sharing"),
+    ],
+)
 @pytest.mark.parametrize(
     ("location", "remaining_wall"),
     [("Internal", 9.53), ("External", 0.9)],
 )
 def test_dent_routes_without_eligible_substrate_are_type_b(
-    mechanism, location, remaining_wall,
+    mechanism, expected_basis, location, remaining_wall,
 ):
     result = calculate_repair(**default_inputs(
         defect_type=mechanism,
@@ -82,6 +113,7 @@ def test_dent_routes_without_eligible_substrate_are_type_b(
         rem_wall=remaining_wall,
     ))
     assert result["calc_method_thick"] == "Type B (Total Replacement)"
+    assert result["calculation_basis"] == expected_basis
     assert result["p_steel_capacity"] == 0.0
     assert result["allowable_pipe_stress_mpa"] is None
 

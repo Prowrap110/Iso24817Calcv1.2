@@ -370,6 +370,11 @@ def calculate_repair(
         design_life,
     )
     defect_type = normalize_mechanism(defect_type)
+    defect_loc = "" if defect_loc is None else str(defect_loc).strip()
+    if defect_loc not in {"External", "Internal"}:
+        raise ValueError(
+            f"Unsupported defect location: {defect_loc or '(blank)'}"
+        )
     if internal_corrosion_rate < 0:
         raise ValueError("Internal corrosion rate cannot be negative.")
     if not 0 < cyclic_derating_factor <= 1:
@@ -407,17 +412,20 @@ def calculate_repair(
     if is_type_b:
         calc_method_thick = "Type B (Total Replacement)"
         calc_method_overlap = "Type B (Shear Controlled)"
-        calculation_basis = "Type B full replacement"
     elif defect_type in {DENT_WITH_CRACK, DENT_NO_CRACK}:
         calc_method_thick = "Type A (Dent Reinforcement)"
         calc_method_overlap = "Type A (Geometry Controlled)"
-        if defect_type == DENT_WITH_CRACK:
-            calculation_basis = "Dent w/crack - full-pressure laminate"
-        else:
-            calculation_basis = "Dent no-crack - substrate load sharing"
     else:
         calc_method_thick = "Type A (Load Sharing)"
         calc_method_overlap = "Type A (Geometry Controlled)"
+
+    if defect_type == DENT_WITH_CRACK:
+        calculation_basis = "Dent w/crack - full-pressure laminate"
+    elif defect_type == DENT_NO_CRACK:
+        calculation_basis = "Dent no-crack - substrate load sharing"
+    elif is_type_b:
+        calculation_basis = "Type B full replacement"
+    else:
         calculation_basis = "ASME B31G-2023 Level 1 (Modified)"
 
     safety_factor = 1.0 / design_factor

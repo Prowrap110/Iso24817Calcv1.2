@@ -33,6 +33,17 @@ class InputValidationTest(unittest.TestCase):
         self.assert_invalid(design_factor=0)
         self.assert_invalid(design_factor=1.1)
 
+    def test_rejects_unsupported_defect_locations(self):
+        for defect_loc in (None, "", "Unknown", "external"):
+            with self.subTest(defect_loc=defect_loc):
+                with self.assertRaisesRegex(
+                    ValueError, "Unsupported defect location"
+                ):
+                    calculate_repair(**default_inputs(
+                        defect_type="Dent no-crack",
+                        defect_loc=defect_loc,
+                    ))
+
 
 if __name__ == "__main__":
     unittest.main()
