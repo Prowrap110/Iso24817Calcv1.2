@@ -8,6 +8,7 @@ from prowrap_calculations import (
     substrate_credit_bar_for_iso_check,
 )
 from prowrap_materials import PROWRAP
+from prowrap_mechanisms import MECHANISM_CHOICES
 from calculator_form import (
     NEUTRAL_CHOICE,
     calculation_corrosion_rate,
@@ -69,7 +70,7 @@ def create_pdf(report_data):
         "Operating Temperature": f"{report_data['temp']} C"
     })
 
-    add_section("2. Defect Assessment", {
+    defect_assessment = {
         "Defect Mechanism": report_data['defect_type'],
         "Defect Location": report_data['defect_loc'],
         "Remaining Wall": f"{report_data['rem_wall']} mm",
@@ -78,8 +79,22 @@ def create_pdf(report_data):
            if report_data['internal_corrosion_rate'] > 0 else ""),
         "Axial Length": f"{report_data['length']} mm",
         "Wall Loss": f"{report_data['wall_loss_ratio']*100:.1f} %",
-        "Repair Logic": report_data['calc_method_thick']
-    })
+        "Repair Logic": report_data['calc_method_thick'],
+        "Calculation Basis": report_data['calculation_basis'],
+    }
+    allowable_pipe_stress = report_data.get("allowable_pipe_stress_mpa")
+    if allowable_pipe_stress is not None:
+        defect_assessment["Allowable Pipe Stress S_allow"] = (
+            f"{allowable_pipe_stress:.2f} MPa"
+        )
+    substrate_pressure = report_data["p_steel_capacity"]
+    defect_assessment["Substrate Allowable Pressure p_s"] = (
+        f"{substrate_pressure:.2f} MPa ({substrate_pressure * 10.0:.2f} bar)"
+    )
+    defect_assessment["Composite Pressure Deficit"] = (
+        f"{report_data['p_composite_design']:.2f} MPa"
+    )
+    add_section("2. Defect Assessment", defect_assessment)
 
     add_section("3. Optimized Repair Design", {
         "Required Plies": f"{report_data['num_plies']} Layers",
@@ -92,7 +107,28 @@ def create_pdf(report_data):
     # Add the basis note to the PDF directly under the design section.
     pdf.set_font("Arial", 'I', 9)
     pdf.set_text_color(100, 100, 100) # Dark grey for note
-    pdf.multi_cell(0, 5, txt=safe_text(f"* Thickness per ISO 24817 Formula 11 performance route (eps_lt = 0.55%, Class 3, {report_data['design_life']} yr design life); axial extent per Formulae 18/20/21; minimum thickness per 7.5.14. Substrate MAWP (p_s) per ASME B31G-2023 Level 1 (Modified) at current remaining wall. Verify against licensed copies of both standards before use."))
+    standards_note = (
+        "* Thickness per ISO 24817 Formula 11 performance route "
+        f"(eps_lt = 0.55%, Class 3, {report_data['design_life']} yr design life); "
+        "axial extent per Formulae 18/20/21; minimum thickness per 7.5.14. "
+    )
+    if report_data.get("b31g_details"):
+        standards_note += (
+            "Substrate MAWP (p_s) per ASME B31G-2023 Level 1 (Modified) "
+            "at current remaining wall. "
+        )
+    elif allowable_pipe_stress is not None:
+        standards_note += (
+            "Dent substrate pressure uses the component-pipe allowable "
+            "stress basis; the laminate carries the pressure deficit. "
+        )
+    else:
+        standards_note += (
+            "No substrate pressure credit is taken; the full design pressure "
+            "is assigned to the laminate. "
+        )
+    standards_note += "Verify against licensed copies of applicable standards before use."
+    pdf.multi_cell(0, 5, txt=safe_text(standards_note))
     pdf.set_text_color(0, 0, 0) # Reset to black
     pdf.ln(2)
     for warning_text in report_data.get("compliance_warnings", []):
@@ -107,12 +143,6 @@ def create_pdf(report_data):
         "Epoxy Required": f"{report_data['epoxy_kg']:.1f} kg"
     })
 
-    # --- METHOD STATEMENT SECTION IN PDF ---
-    pdf.set_font("Arial", 'B', 12)
-    pdf.set_fill_color(200, 220, 255)
-    pdf.cell(0, 8, txt="5. Installation Checklist (Method Statement)", ln=True, fill=True)
-    pdf.set_font("Arial", '', 11)
-    
     steps = [
         "1. Surface Prep: Grit blast to SA 2.5; Profile >60 microns.",
         "2. Primer/Filler: Apply Prowrap Filler to defect area to restore OD.",
@@ -120,6 +150,15 @@ def create_pdf(report_data):
         f"4. Wrapping: Use {report_data['num_bands']} band(s) of {report_data['cloth_width_mm']:g} mm cloth.",
         f"5. Quality Control: Minimum average Shore D hardness of {PROWRAP['shore_d_min']} required."
     ]
+
+    # --- METHOD STATEMENT SECTION IN PDF ---
+    checklist_height = 8 + len(steps) * 6 + (8 if report_data['num_plies'] == 2 else 0)
+    if pdf.get_y() + checklist_height > pdf.h - pdf.b_margin:
+        pdf.add_page()
+    pdf.set_font("Arial", 'B', 12)
+    pdf.set_fill_color(200, 220, 255)
+    pdf.cell(0, 8, txt="5. Installation Checklist (Method Statement)", ln=True, fill=True)
+    pdf.set_font("Arial", '', 11)
     
     for step in steps:
         pdf.multi_cell(0, 6, txt=safe_text(step))
@@ -188,6 +227,9 @@ def run_calculation(
         for err in str(exc).splitlines():
             st.error(f"❌ **INPUT ERROR:** {err}")
         return
+
+    defect_type = report_data["defect_type"]
+    calculation_basis = report_data["calculation_basis"]
 
     wall_loss_ratio = report_data["wall_loss_ratio"]
     num_plies = report_data["num_plies"]
@@ -275,6 +317,7 @@ def run_calculation(
         with c1:
             st.markdown("### Defect Analysis")
             st.write(f"**Mechanism:** {defect_type}")
+            st.write(f"**Calculation Basis:** {calculation_basis}")
             st.write(f"**Wall Loss:** {wall_loss_ratio*100:.1f}%")
             b31g = report_data.get("b31g_details")
             if b31g:
@@ -282,7 +325,25 @@ def run_calculation(
                 st.write(f"**B31G:** d/t={b31g['d_over_t']:.3f}, z={b31g['z']:.2f}, M={b31g['folias_m']:.3f}, S_F={b31g['s_f_mpa']:.0f} MPa, P_F={b31g['p_f_mpa']:.2f} MPa")
                 st.write(f"**B31G Acceptance (pipe alone):** {'ACCEPTABLE' if b31g.get('acceptable') else 'NOT ACCEPTABLE'} at design pressure")
             else:
-                st.write(f"**Effective Pipe Capacity:** {p_steel_capacity:.2f} MPa (no substrate credit for this defect type)")
+                allowable_pipe_stress = report_data.get("allowable_pipe_stress_mpa")
+                if allowable_pipe_stress is not None:
+                    st.write(
+                        "**Allowable Pipe Stress S_allow:** "
+                        f"{allowable_pipe_stress:.2f} MPa"
+                    )
+                st.write(
+                    "**Substrate Allowable Pressure p_s:** "
+                    f"{p_steel_capacity:.2f} MPa "
+                    f"({p_steel_capacity * 10.0:.2f} bar)"
+                )
+                if p_steel_capacity == 0:
+                    st.write(
+                        "**Load Assignment:** Full design pressure is assigned "
+                        "to the laminate."
+                    )
+            st.write(
+                f"**Composite Pressure Deficit:** {p_composite_design:.2f} MPa"
+            )
         with c2:
             st.markdown("### Structural Design")
             st.write(f"**Composite Design Pressure:** {p_composite_design:.2f} MPa")
@@ -441,7 +502,12 @@ def main():
         temp = st.sidebar.number_input("Op. Temperature [°C]", key="temp", on_change=reset_calc)
         
         st.sidebar.header("4. Defect Data")
-        type_ = st.sidebar.selectbox("Mechanism", [NEUTRAL_CHOICE, "Corrosion", "Dent", "Leak", "Crack"], key="type_", on_change=reset_calc)
+        type_ = st.sidebar.selectbox(
+            "Mechanism",
+            [NEUTRAL_CHOICE, *MECHANISM_CHOICES],
+            key="type_",
+            on_change=reset_calc,
+        )
         loc_ = st.sidebar.selectbox("Location", [NEUTRAL_CHOICE, "External", "Internal"], key="loc_", on_change=reset_calc)
         len_ = st.sidebar.number_input("Defect Length [mm]", key="len_", on_change=reset_calc)
         rem_ = st.sidebar.number_input("Remaining Wall [mm]", key="rem_", on_change=reset_calc)
@@ -459,7 +525,10 @@ def main():
         st.sidebar.header("6. Installation & Load Conditions")
         st.sidebar.caption("These inputs feed the baseline design (thermal mismatch, component factor f_th, cyclic derating, Formula 4 axial loads) and the ISO Type A / Class 3 check.")
         show_typea_class3_check = st.sidebar.checkbox("Show Type A / Class 3 check", key="show_typea_class3_check", on_change=reset_calc)
-        st.sidebar.caption("For external corrosion/dent defects, substrate credit is automatically taken from effective pipe capacity.")
+        st.sidebar.caption(
+            "Substrate credit is route-specific; the applicable calculation "
+            "basis is shown in the result."
+        )
         installation_temp = st.sidebar.number_input("Installation temperature [°C]", key="installation_temp", on_change=reset_calc)
         component_type = st.sidebar.selectbox("Component type", [NEUTRAL_CHOICE, "Straight", "Bend", "Tee", "Flange", "Reducer"], key="component_type", on_change=reset_calc)
         cyclic_derating_factor = st.sidebar.number_input("Cyclic derating factor", min_value=0.01, max_value=1.0, key="cyclic_derating_factor", on_change=reset_calc)
