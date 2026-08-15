@@ -62,8 +62,12 @@ class TypeABaselineMatchesRigorousTest(unittest.TestCase):
         # Everything at once.
         ({"pressure": 90.0, "rem_wall": 3.5, "temp": 45.0, "design_life": 10},
          8.0, "Bend", 0.85, 1),
-        # External dent (no substrate credit) with axial loads.
-        ({"defect_type": "Dent", "rem_wall": 9.53}, 15.0, "Straight", 0.9, 1),
+        # External dent with crack (no substrate credit) with axial loads.
+        ({"defect_type": "Dent w/crack", "rem_wall": 9.53},
+         15.0, "Straight", 0.9, 1),
+        # External dent without crack: approved component-pipe load sharing.
+        ({"defect_type": "Dent no-crack", "pressure": 120.0,
+          "rem_wall": 3.0}, 20.0, "Straight", 1.0, 0),
     ]
 
     def test_baseline_type_a_matches_rigorous_module(self):
@@ -76,6 +80,18 @@ class TypeABaselineMatchesRigorousTest(unittest.TestCase):
                 self.assertIn("Type A", baseline["calc_method_thick"])
                 design = baseline["typea_design"]
                 self.assertIsNotNone(design)
+                self.assertAlmostEqual(
+                    design["substrate_pressure_mpa"],
+                    baseline["p_steel_capacity"],
+                    places=10,
+                )
+                self.assertAlmostEqual(
+                    rigorous["input_summary"][
+                        "substrate_allowable_pressure_bar"
+                    ],
+                    baseline["p_steel_capacity"] * 10.0,
+                    places=10,
+                )
 
                 # Strains (Formula 11 + 25 hoop; Formula 10 axial).
                 self.assertAlmostEqual(design["eps_c"], rigorous["eps_c"], places=10)
@@ -115,12 +131,26 @@ class RoutingTest(unittest.TestCase):
         self.assertEqual(result["calc_method_thick"], "Type A (Load Sharing)")
         self.assertEqual(result["calc_method_overlap"], "Type A (Geometry Controlled)")
 
-    def test_external_dent_is_type_a(self):
-        result = calculate_repair(
-            **default_inputs(defect_type="Dent", rem_wall=9.53))
-        self.assertEqual(result["calc_method_thick"], "Type A (Dent Reinforcement)")
-        self.assertEqual(result["calc_method_overlap"], "Type A (Geometry Controlled)")
-        self.assertAlmostEqual(result["p_steel_capacity"], 0.0)
+    def test_external_dents_are_type_a_with_mechanism_specific_credit(self):
+        expected_no_crack_pressure = 2.0 * (359.0 * 0.72) * 9.53 / 457.2
+        expected = {
+            "Dent w/crack": 0.0,
+            "Dent no-crack": expected_no_crack_pressure,
+        }
+        for mechanism, expected_credit in expected.items():
+            with self.subTest(mechanism=mechanism):
+                result = calculate_repair(
+                    **default_inputs(defect_type=mechanism, rem_wall=9.53))
+                self.assertEqual(
+                    result["calc_method_thick"],
+                    "Type A (Dent Reinforcement)",
+                )
+                self.assertEqual(
+                    result["calc_method_overlap"],
+                    "Type A (Geometry Controlled)",
+                )
+                self.assertAlmostEqual(
+                    result["p_steel_capacity"], expected_credit)
 
     def test_internal_corrosion_is_type_b(self):
         result = calculate_repair(**default_inputs(defect_loc="Internal"))
@@ -128,11 +158,17 @@ class RoutingTest(unittest.TestCase):
         self.assertAlmostEqual(result["p_steel_capacity"], 0.0)
         self.assertIsNotNone(result["type_b_details"])
 
-    def test_internal_dent_is_type_b(self):
-        result = calculate_repair(
-            **default_inputs(defect_type="Dent", defect_loc="Internal",
-                             rem_wall=9.53))
-        self.assertEqual(result["calc_method_thick"], "Type B (Total Replacement)")
+    def test_internal_dents_are_type_b(self):
+        for mechanism in ("Dent w/crack", "Dent no-crack"):
+            with self.subTest(mechanism=mechanism):
+                result = calculate_repair(
+                    **default_inputs(defect_type=mechanism,
+                                     defect_loc="Internal", rem_wall=9.53))
+                self.assertEqual(
+                    result["calc_method_thick"],
+                    "Type B (Total Replacement)",
+                )
+                self.assertAlmostEqual(result["p_steel_capacity"], 0.0)
 
     def test_crack_and_leak_are_type_b_regardless_of_location(self):
         for defect_type in ("Crack", "Leak"):

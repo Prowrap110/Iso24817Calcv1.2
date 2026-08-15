@@ -5,6 +5,7 @@ import math
 from b31g import assess_b31g
 from iso24817_typea_class3 import TypeAClass3Inputs, calculate_type_a_class3
 from prowrap_materials import PROWRAP
+from prowrap_mechanisms import DENT_NO_CRACK, DENT_WITH_CRACK, normalize_mechanism
 
 # Carbon-steel substrate CTE used in the ISO 24817 Formula (10)
 # thermal-mismatch term (same value as the rigorous module default).
@@ -30,6 +31,20 @@ def baseline_component_factor(component_type):
             "Unknown component type. Use Straight, Bend, Tee, Flange, or Reducer."
         )
     return COMPONENT_FTH[key]
+
+
+def component_pipe_allowable_basis(
+    *, od_mm, remaining_wall_mm, smys_mpa, design_factor,
+):
+    allowable_stress_mpa = smys_mpa * design_factor
+    allowable_pressure_mpa = max(
+        0.0,
+        2.0 * allowable_stress_mpa * remaining_wall_mm / od_mm,
+    )
+    return {
+        "allowable_stress_mpa": allowable_stress_mpa,
+        "allowable_pressure_mpa": allowable_pressure_mpa,
+    }
 
 
 def baseline_type_a_design(
@@ -138,6 +153,7 @@ def baseline_type_a_design(
     lmin_transfer = 3.0 * ea * eps_a * tdesign_base / tau
 
     return {
+        "substrate_pressure_mpa": substrate_pressure_mpa,
         "fperf": fperf,
         "ft": ft,
         "eps_lt": eps_lt,
@@ -328,9 +344,11 @@ def calculate_repair(
     corrosion, used to project the remaining wall to end of design life.
     External Type A defects are sealed by the repair (rate = 0).
 
-    Routing: External corrosion/dent defects follow the Type A route
-    (load sharing); Internal defects and cracks/leaks follow the Type B
-    route (through-wall formulas, no substrate credit).
+    Routing: External corrosion and canonical dent defects with at least
+    1 mm remaining wall follow the Type A route. Dent-with-crack receives
+    no substrate credit; dent-without-crack uses the approved component-pipe
+    allowable basis. Internal defects, cracks/leaks, and defects below 1 mm
+    remaining wall follow the Type B route (through-wall formulas, no credit).
 
     installation_temp (degC): repair installation temperature, used in the
     ISO 24817 Formula (10) thermal-mismatch strain term.
@@ -351,6 +369,7 @@ def calculate_repair(
         design_factor,
         design_life,
     )
+    defect_type = normalize_mechanism(defect_type)
     if internal_corrosion_rate < 0:
         raise ValueError("Internal corrosion rate cannot be negative.")
     if not 0 < cyclic_derating_factor <= 1:
@@ -377,10 +396,9 @@ def calculate_repair(
         rem_wall_eol = rem_wall
     has_no_substrate_capacity = rem_wall_eol < 1.0
 
-    # Routing: External + Corrosion/Dent -> Type A (defect sealed by the
-    # repair, substrate shares load). Internal defects, cracks and leaks
-    # -> Type B (through-wall route, no substrate credit). External
-    # corrosion projected below 1 mm also falls through to Type B.
+    # Routing: eligible external corrosion and either canonical dent follow
+    # Type A. Internal defects, cracks, leaks, and defects below 1 mm follow
+    # Type B without substrate credit.
     is_type_b = (
         defect_loc == "Internal"
         or defect_type in ["Leak", "Crack"]
@@ -389,12 +407,18 @@ def calculate_repair(
     if is_type_b:
         calc_method_thick = "Type B (Total Replacement)"
         calc_method_overlap = "Type B (Shear Controlled)"
-    elif defect_type == "Dent":
+        calculation_basis = "Type B full replacement"
+    elif defect_type in {DENT_WITH_CRACK, DENT_NO_CRACK}:
         calc_method_thick = "Type A (Dent Reinforcement)"
         calc_method_overlap = "Type A (Geometry Controlled)"
+        if defect_type == DENT_WITH_CRACK:
+            calculation_basis = "Dent w/crack - full-pressure laminate"
+        else:
+            calculation_basis = "Dent no-crack - substrate load sharing"
     else:
         calc_method_thick = "Type A (Load Sharing)"
         calc_method_overlap = "Type A (Geometry Controlled)"
+        calculation_basis = "ASME B31G-2023 Level 1 (Modified)"
 
     safety_factor = 1.0 / design_factor
 
@@ -419,6 +443,7 @@ def calculate_repair(
     # leak, < 1 mm projected wall) takes no substrate credit.
     b31g_details = None
     p_steel_capacity = 0.0
+    allowable_pipe_stress_mpa = None
     if defect_type == "Corrosion" and not has_no_substrate_capacity:
         # Depth is taken at END of design life (internal corrosion
         # projected at the given rate; external sealed by the repair).
@@ -435,6 +460,15 @@ def calculate_repair(
         # d/t > 0.80: beyond B31G - no Level 1 substrate credit.
         if "Type A" in calc_method_thick and b31g_details["applicable"]:
             p_steel_capacity = b31g_details["p_s_mpa"]
+    elif defect_type == DENT_NO_CRACK and not is_type_b:
+        pipe_basis = component_pipe_allowable_basis(
+            od_mm=od,
+            remaining_wall_mm=rem_wall,
+            smys_mpa=yield_strength,
+            design_factor=design_factor,
+        )
+        allowable_pipe_stress_mpa = pipe_basis["allowable_stress_mpa"]
+        p_steel_capacity = pipe_basis["allowable_pressure_mpa"]
 
     if "Type A" in calc_method_thick and p_steel_capacity > 0:
         p_composite_design = max(0, pressure_mpa - p_steel_capacity)
@@ -651,6 +685,8 @@ def calculate_repair(
         "is_severe_loss": has_no_substrate_capacity,
         "calc_method_thick": calc_method_thick,
         "calc_method_overlap": calc_method_overlap,
+        "calculation_basis": calculation_basis,
+        "allowable_pipe_stress_mpa": allowable_pipe_stress_mpa,
         "safety_factor": safety_factor,
         "temp_factor": temp_factor,
         "design_strain": design_strain,
@@ -767,9 +803,10 @@ calculate_type_a_class3_fallback_check = calculate_type_a_class3_prowrap_check
 def substrate_credit_bar_for_iso_check(repair_data):
     """Return the substrate pressure credit for ISO checks in bar.
 
-    p_steel_capacity already encodes the B31G scope rules (no credit for
-    cracks/leaks/dents or < 1 mm end-of-life wall; internal corrosion
-    assessed at the projected end-of-life wall).
+    p_steel_capacity already encodes the substrate-credit scope rules:
+    B31G for eligible external corrosion, approved component-pipe pressure
+    for eligible external dent without crack, and no credit for cracks,
+    leaks, dent with crack, internal defects, or < 1 mm remaining wall.
     """
     if repair_data["defect_type"] in {"Crack", "Leak"}:
         return 0.0
