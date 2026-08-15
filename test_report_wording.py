@@ -61,6 +61,24 @@ class ReportWordingTest(unittest.TestCase):
             text,
         )
 
+    def test_internal_dent_no_crack_pdf_reports_type_b_basis(self):
+        report_data = calculate_repair(**default_inputs(
+            defect_type="Dent no-crack",
+            defect_loc="Internal",
+            rem_wall=9.53,
+        ))
+
+        pdf_bytes = create_pdf(report_data)
+
+        self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+        text = "\n".join(
+            page.extract_text() or ""
+            for page in PdfReader(BytesIO(pdf_bytes)).pages
+        )
+        self.assertIn("Repair Logic: Type B (Total Replacement)", text)
+        self.assertIn("Calculation Basis: Type B full replacement", text)
+        self.assertNotIn("substrate load sharing", text)
+
 
 if __name__ == "__main__":
     unittest.main()

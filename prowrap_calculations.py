@@ -419,12 +419,12 @@ def calculate_repair(
         calc_method_thick = "Type A (Load Sharing)"
         calc_method_overlap = "Type A (Geometry Controlled)"
 
-    if defect_type == DENT_WITH_CRACK:
+    if is_type_b:
+        calculation_basis = "Type B full replacement"
+    elif defect_type == DENT_WITH_CRACK:
         calculation_basis = "Dent w/crack - full-pressure laminate"
     elif defect_type == DENT_NO_CRACK:
         calculation_basis = "Dent no-crack - substrate load sharing"
-    elif is_type_b:
-        calculation_basis = "Type B full replacement"
     else:
         calculation_basis = "ASME B31G-2023 Level 1 (Modified)"
 

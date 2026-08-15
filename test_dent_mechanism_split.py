@@ -96,8 +96,8 @@ def test_dent_location_whitespace_is_normalized_before_routing(
 @pytest.mark.parametrize(
     ("mechanism", "expected_basis"),
     [
-        ("Dent w/crack", "Dent w/crack - full-pressure laminate"),
-        ("Dent no-crack", "Dent no-crack - substrate load sharing"),
+        ("Dent w/crack", "Type B full replacement"),
+        ("Dent no-crack", "Type B full replacement"),
     ],
 )
 @pytest.mark.parametrize(
