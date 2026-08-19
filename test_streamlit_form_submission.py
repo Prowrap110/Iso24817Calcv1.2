@@ -23,6 +23,7 @@ class StreamlitFormSubmissionTest(unittest.TestCase):
         defect_length_basis="Actual defect length",
         od=457.2,
         wall=9.53,
+        yield_strength=359.0,
         defect_length=100.0,
     ):
         for key, value in {
@@ -35,7 +36,7 @@ class StreamlitFormSubmissionTest(unittest.TestCase):
         for key, value in {
             "od": od,
             "wall": wall,
-            "yield_str": 359.0,
+            "yield_str": yield_strength,
             "pres": 50.0,
             "temp": 40.0,
             "len_": defect_length,
@@ -89,6 +90,45 @@ class StreamlitFormSubmissionTest(unittest.TestCase):
             "Enter manually",
         ])
 
+    def test_defect_length_guidance_changes_by_mode_and_selector_follows_field(self):
+        expected_guidance = {
+            "Actual defect length": (
+                "Defect Length is the longitudinal length of the continuous "
+                "or combined interacting flaw."
+            ),
+            "Independent defects": (
+                "Defect Length is the complete outer-to-outer repair-zone "
+                "span for the overall continuous repair."
+            ),
+            "Enter manually": (
+                "Defect Length is the complete outer-to-outer repair-zone "
+                "span for the overall continuous repair."
+            ),
+        }
+
+        for basis, guidance in expected_guidance.items():
+            with self.subTest(basis=basis):
+                app = AppTest.from_file("PWR110Calculator.py").run()
+                app.selectbox(key="type_").select("Corrosion")
+                app.selectbox(key="loc_").select("External").run()
+                sidebar_elements = list(app.sidebar)[1:]
+                field_index = next(
+                    index for index, element in enumerate(sidebar_elements)
+                    if getattr(element, "key", None) == "len_"
+                )
+                selector_index = next(
+                    index for index, element in enumerate(sidebar_elements)
+                    if getattr(element, "key", None) == "defect_length_basis"
+                )
+                self.assertEqual(selector_index, field_index + 1)
+
+                app.selectbox(key="defect_length_basis").select(basis).run()
+
+                self.assertIn(
+                    guidance,
+                    [caption.value for caption in app.caption],
+                )
+
     def test_dent_does_not_show_corrosion_basis(self):
         app = AppTest.from_file("PWR110Calculator.py").run()
         app.selectbox(key="type_").select("Dent no-crack")
@@ -97,6 +137,10 @@ class StreamlitFormSubmissionTest(unittest.TestCase):
             [box for box in app.selectbox if box.key == "defect_length_basis"],
             [],
         )
+        captions = [caption.value for caption in app.caption]
+        self.assertFalse(any(
+            caption.startswith("Defect Length is") for caption in captions
+        ))
 
     def test_independent_mode_shows_assumptions_and_governing_dimensions(self):
         app = AppTest.from_file("PWR110Calculator.py").run()
@@ -114,12 +158,41 @@ class StreamlitFormSubmissionTest(unittest.TestCase):
 
         rendered = self._rendered_markdown(app)
         self.assertIn("**Defect Length Basis:** Independent defects", rendered)
+        self.assertIn(
+            "**Calculation Basis:** ASME B31G-2023 Level 1 (Modified)",
+            rendered,
+        )
         self.assertIn("**B31G Candidates Assessed:** 1", rendered)
         self.assertIn("**B31G Assessment Length:** 10.0 mm", rendered)
         self.assertIn("**Overall Repair-Zone Span:** 1000.0 mm", rendered)
         self.assertIn(
             "10 mm longitudinal by 10 mm circumferential", rendered,
         )
+        self.assertEqual(list(app.exception), [])
+
+    def test_high_smys_screen_reports_original_b31g_fallback(self):
+        app = AppTest.from_file("PWR110Calculator.py").run()
+        self._enter_complete_form_except_cloth_width(
+            app,
+            yield_strength=555.0,
+            defect_length_basis="Actual defect length",
+        )
+        app.number_input(key="cloth_width_mm").set_value(300.0).run()
+
+        self._calculate_button(app).click().run()
+
+        rendered = self._rendered_markdown(app)
+        self.assertIn(
+            "**Calculation Basis:** ASME B31G-2023 Level 1 (Original)",
+            rendered,
+        )
+        self.assertIn(
+            "**Substrate MAWP p_s (ASME B31G Original,", rendered,
+        )
+        self.assertTrue(any(
+            "falling back to Original B31G" in error.value
+            for error in app.error
+        ))
         self.assertEqual(list(app.exception), [])
 
     def test_manual_mode_hides_scalar_wall_and_shows_calculated_3t(self):

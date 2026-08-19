@@ -32,6 +32,18 @@ new repository shall not have a push remote pointing to the v1.1 GitHub
 repository. Any future GitHub repository and Streamlit application shall use a
 new name and URL.
 
+The v1.2 desktop release shall also use a distinct physical identity so it
+cannot overwrite v1.1:
+
+- app bundle: `PROWRAP ISO 24817 Calculator v1.2.app`;
+- main executable: `PROWRAP ISO 24817 Calculator v1.2`;
+- bundle identifier: `com.protapglobal.prowrap.iso24817calculator.v12`;
+- archive: `PROWRAP-Calculator-v1.2-macOS-arm64-M4-M5.zip`;
+- launcher title: `PROWRAP ISO 24817 Calculator v1.2`;
+- internal application version: `1.2`.
+
+The arm64-only M4/M5 build and runtime behavior remain unchanged.
+
 The existing CalcBatch repository and live batch application shall also remain
 unchanged. A separate `CalcBatch-v1.2` project will be created only after the
 v1.2 calculator has been implemented, tested, and accepted. The verified v1.2
@@ -68,14 +80,15 @@ immediately after `Defect Length [mm]`:
 For other mechanisms or locations, the selector is hidden and the calculator
 uses the existing length behavior.
 
-The existing `Defect Length [mm]` input has mode-dependent help text:
+The existing `Defect Length [mm]` input has visible mode-dependent guidance
+before calculation:
 
-- `Actual defect length`: longitudinal length of the continuous or combined
-  interacting flaw.
-- `Independent defects`: complete outer-to-outer axial span to be covered by
-  the continuous repair.
-- `Enter manually`: complete outer-to-outer axial span to be covered by the
-  continuous repair.
+- `Actual defect length`: `Defect Length is the longitudinal length of the
+  continuous or combined interacting flaw.`
+- `Independent defects`: `Defect Length is the complete outer-to-outer
+  repair-zone span for the overall continuous repair.`
+- `Enter manually`: `Defect Length is the complete outer-to-outer repair-zone
+  span for the overall continuous repair.`
 
 ### 4.1 Actual defect length
 
@@ -153,6 +166,11 @@ defects shall never be combined in manual mode.
 
 Run the existing Modified B31G assessment independently for every candidate,
 including the current safety factor and Original B31G fallback rules.
+The stored result, screen, and PDF shall derive their method and applicability
+wording from the governing assessment actually returned. Ordinary eligible
+cases report Modified, a high-SMYS fallback reports Original without changing
+its warning or numerical result, and an inapplicable governing assessment is
+identified as outside applicability with zero substrate credit.
 
 For each candidate:
 
@@ -207,7 +225,10 @@ The screen and PDF shall report:
 - governing safe substrate pressure;
 - continuous-repair length and installed plies;
 - the permanent 10 x 10 mm assumptions when independent mode is selected;
-- a compact individual-defect assessment table in manual mode.
+- a compact, bordered individual-defect assessment table in manual mode with
+  readable Defect ID, length, remaining wall, actual method, applicability,
+  credited pressure, and governing-status columns. Table headings repeat after
+  a page break.
 
 Existing B31G details, warnings, calculation-basis wording, and preliminary
 engineering disclaimer remain present.
@@ -225,6 +246,11 @@ The calculator rejects:
 - a remaining wall below zero or above nominal wall;
 - a blank or false separation confirmation;
 - partially populated manual rows.
+
+A completely blank editor placeholder row is ignored even when its checkbox is
+unchecked. Pandas/float NaN, `NA`, and `NaT` values are missing sentinels, not
+valid Defect IDs or strings; populated rows with an unchecked separation box
+remain invalid.
 
 Errors are shown as input errors and no report is generated from invalid data.
 The calculator never silently converts an unconfirmed interacting group into

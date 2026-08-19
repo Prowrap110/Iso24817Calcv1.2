@@ -547,6 +547,19 @@ def calculate_repair(
         allowable_pipe_stress_mpa = pipe_basis["allowable_stress_mpa"]
         p_steel_capacity = pipe_basis["allowable_pressure_mpa"]
 
+    if (
+        b31g_details is not None
+        and calculation_basis.startswith("ASME B31G")
+    ):
+        method_label = b31g_details["method"].title()
+        applicability_label = (
+            "" if b31g_details["applicable"] else "; outside applicability"
+        )
+        calculation_basis = (
+            "ASME B31G-2023 Level 1 "
+            f"({method_label}{applicability_label})"
+        )
+
     if "Type A" in calc_method_thick and p_steel_capacity > 0:
         p_composite_design = max(0, pressure_mpa - p_steel_capacity)
     else:

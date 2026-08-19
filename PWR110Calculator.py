@@ -83,6 +83,82 @@ def create_pdf(report_data):
         if pdf.get_y() + required_height > pdf.h - pdf.b_margin:
             pdf.add_page()
 
+    def add_manual_b31g_table(candidate_assessments, governing_id):
+        columns = (
+            ("Defect ID", 38, "L"),
+            ("Length [mm]", 25, "R"),
+            ("Wall [mm]", 24, "R"),
+            ("Method", 24, "C"),
+            ("Applicable", 24, "C"),
+            ("Credit [MPa]", 28, "R"),
+            ("Governing", 25, "C"),
+        )
+        row_height = 5.5
+        title_height = 6
+
+        def fit_cell_text(value, width):
+            text = safe_text(str(value))
+            if pdf.get_string_width(text) <= width - 2:
+                return text
+            suffix = "..."
+            while text and pdf.get_string_width(text + suffix) > width - 2:
+                text = text[:-1]
+            return text + suffix
+
+        def draw_title(continued=False):
+            pdf.set_font("Arial", 'B', 10)
+            suffix = " (continued)" if continued else ""
+            pdf.cell(
+                0,
+                title_height,
+                txt=f"Individual B31G candidate assessments{suffix}",
+                ln=True,
+            )
+
+        def draw_header():
+            pdf.set_font("Arial", 'B', 7)
+            pdf.set_fill_color(225, 235, 248)
+            for heading, width, alignment in columns:
+                pdf.cell(
+                    width,
+                    row_height,
+                    txt=heading,
+                    border=1,
+                    align=alignment,
+                    fill=True,
+                )
+            pdf.ln(row_height)
+
+        ensure_page_space(title_height + 2 * row_height + 2)
+        draw_title()
+        draw_header()
+        for item in candidate_assessments:
+            if pdf.get_y() + row_height > pdf.h - pdf.b_margin:
+                pdf.add_page()
+                draw_title(continued=True)
+                draw_header()
+            assessment = item["assessment"]
+            values = (
+                item["defect_id"],
+                f"{item['length_mm']:.1f}",
+                f"{item['remaining_wall_mm']:.3f}",
+                assessment["method"].title(),
+                "Yes" if assessment["applicable"] else "No",
+                f"{item['credited_pressure_mpa']:.2f}",
+                "Yes" if item["defect_id"] == governing_id else "No",
+            )
+            pdf.set_font("Arial", '', 7)
+            for value, (_heading, width, alignment) in zip(values, columns):
+                pdf.cell(
+                    width,
+                    row_height,
+                    txt=fit_cell_text(value, width),
+                    border=1,
+                    align=alignment,
+                )
+            pdf.ln(row_height)
+        pdf.ln(3)
+
     add_section("1. Project & Pipeline Data", {
         "Customer": report_data['customer'],
         "Location": report_data['location'],
@@ -150,31 +226,19 @@ def create_pdf(report_data):
     if is_external_corrosion:
         assumptions = report_data["defect_basis_assumptions"]
         candidate_assessments = report_data["b31g_assessments"]
-        candidate_lines = (
-            len(candidate_assessments)
-            if report_data["defect_length_basis"] == ENTER_MANUALLY
-            else 0
-        )
-        ensure_page_space(8 + len(assumptions) * 5 + candidate_lines * 5 + 5)
+        ensure_page_space(8 + len(assumptions) * 5 + 5)
         pdf.set_font("Arial", 'B', 10)
         pdf.cell(0, 6, txt="Defect-basis assumptions", ln=True)
         pdf.set_font("Arial", '', 9)
         for assumption in assumptions:
             pdf.multi_cell(0, 5, txt=safe_text(f"- {assumption}"))
         if report_data["defect_length_basis"] == ENTER_MANUALLY:
-            pdf.set_font("Arial", 'B', 10)
-            pdf.cell(0, 6, txt="Individual B31G candidate assessments", ln=True)
-            pdf.set_font("Arial", '', 9)
-            for item in candidate_assessments:
-                pdf.multi_cell(
-                    0, 5,
-                    txt=safe_text(
-                        f"{item['defect_id']}: {item['length_mm']:.1f} mm, "
-                        f"remaining wall {item['remaining_wall_mm']:.3f} mm, "
-                        f"credited pressure {item['credited_pressure_mpa']:.2f} MPa"
-                    ),
-                )
-        pdf.ln(3)
+            add_manual_b31g_table(
+                candidate_assessments,
+                report_data["governing_defect_id"],
+            )
+        else:
+            pdf.ln(3)
 
     add_section("3. Optimized Repair Design", {
         "Required Plies": f"{report_data['num_plies']} Layers",
@@ -195,9 +259,17 @@ def create_pdf(report_data):
         "axial extent per Formulae 18/20/21; minimum thickness per 7.5.14. "
     )
     if report_data.get("b31g_details"):
+        b31g = report_data["b31g_details"]
+        method_label = b31g["method"].title()
+        applicability_note = (
+            " at current remaining wall. "
+            if b31g["applicable"]
+            else "; the governing assessment is outside applicability and "
+            "no substrate pressure credit is taken. "
+        )
         standards_note += (
-            "Substrate MAWP (p_s) per ASME B31G-2023 Level 1 (Modified) "
-            "at current remaining wall. "
+            "Substrate MAWP (p_s) per ASME B31G-2023 Level 1 "
+            f"({method_label}){applicability_note}"
         )
     elif allowable_pipe_stress is not None:
         standards_note += (
@@ -672,6 +744,19 @@ def main():
                 key="defect_length_basis",
                 on_change=reset_calc,
             )
+            if defect_length_basis == ACTUAL_DEFECT_LENGTH:
+                st.sidebar.caption(
+                    "Defect Length is the longitudinal length of the "
+                    "continuous or combined interacting flaw."
+                )
+            elif defect_length_basis in {
+                INDEPENDENT_DEFECTS,
+                ENTER_MANUALLY,
+            }:
+                st.sidebar.caption(
+                    "Defect Length is the complete outer-to-outer "
+                    "repair-zone span for the overall continuous repair."
+                )
         manual_input_error = None
         if defect_length_basis == ENTER_MANUALLY:
             if wall is None:

@@ -1,5 +1,7 @@
 import unittest
 
+import pandas as pd
+
 from app_identity import APP_NAME, APP_VERSION, SOURCE_BASELINE_REVISION
 from corrosion_defects import (
     ACTUAL_DEFECT_LENGTH,
@@ -91,6 +93,31 @@ class CorrosionDefectContractTest(unittest.TestCase):
             [("LONG", 80.0, 10.5), ("DEEP", 12.0, 6.0)],
         )
         self.assertEqual(plan.minimum_remaining_wall_mm, 6.0)
+
+    def test_manual_ignores_blank_editor_placeholder_with_unchecked_checkbox(self):
+        defects = normalize_manual_defects([
+            {
+                "Defect ID": float("nan"),
+                "Individual longitudinal length [mm]": pd.NA,
+                "Remaining wall [mm]": pd.NaT,
+                "Separation exceeds 3t": False,
+            }
+        ])
+
+        self.assertEqual(defects, ())
+
+    def test_manual_rejects_missing_defect_id_sentinels_without_stringifying(self):
+        for missing_id in (float("nan"), pd.NA, pd.NaT):
+            with self.subTest(missing_id=repr(missing_id)):
+                with self.assertRaisesRegex(ValueError, "Defect ID is required"):
+                    normalize_manual_defects([
+                        {
+                            "Defect ID": missing_id,
+                            "Individual longitudinal length [mm]": 10.0,
+                            "Remaining wall [mm]": 8.0,
+                            "Separation exceeds 3t": True,
+                        }
+                    ])
 
     def test_manual_rejects_duplicate_ids_and_unconfirmed_separation(self):
         duplicate = (

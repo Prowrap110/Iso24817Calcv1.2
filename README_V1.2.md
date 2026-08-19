@@ -14,6 +14,14 @@ repository, name, or URL.  No deployment is claimed by this document.  A
 future **CalcBatch-v1.2** is a separate project and may only port this accepted
 v1.2 engine after acceptance; it is not the current CalcBatch.
 
+The desktop release is physically isolated from v1.1 as
+**PROWRAP ISO 24817 Calculator v1.2.app**, with the executable
+**PROWRAP ISO 24817 Calculator v1.2**, bundle identifier
+`com.protapglobal.prowrap.iso24817calculator.v12`, launcher title
+**PROWRAP ISO 24817 Calculator v1.2**, and archive
+`PROWRAP-Calculator-v1.2-macOS-arm64-M4-M5.zip`. The internal version remains
+`1.2`; do not rename these deliverables to the v1.1 release names.
+
 ## Choose the defect-length basis
 
 The **Defect Length Basis** control is shown only for an external corrosion
@@ -59,7 +67,8 @@ the table for every assessed defect:
 The calculator preserves each length/remaining-wall pair.  It calculates a
 B31G candidate for each row; the row with the lowest credited pressure governs
 the result (where credits are equal, the first listed row governs).  The
-entered **Defect Length [mm]** remains the complete repair-zone span.
+entered **Defect Length [mm]** remains the complete outer-to-outer repair-zone
+span for the overall continuous repair.
 
 Do not calculate from a partly completed table.  A blank ID, length, wall,
 separation confirmation, duplicate ID, non-positive length, wall outside the
@@ -83,8 +92,10 @@ purposes:
 
 Review the result/PDF before issue.  Confirm the displayed Defect Length Basis,
 Overall Repair-Zone Span, B31G Assessment Length, Governing Defect (manual
-mode), credited pressure, ply count, overlap, taper, and total ISO repair
-length agree with the inspection record and approved repair plan.
+mode), actual B31G method and applicability, credited pressure, ply count,
+overlap, taper, and total ISO repair length agree with the inspection record
+and approved repair plan. Manual PDFs present the individual candidate
+assessments as a compact table with repeated headings across page breaks.
 
 ## Local operation and verification
 
@@ -116,8 +127,12 @@ current CalcBatch.
 
 ## Engineering responsibility
 
-This is a preliminary ISO 24817 / ASME PCC-2 screening estimate that uses an
-ASME B31G Level 1 (Modified) substrate assessment where applicable.  The
+This is a preliminary ISO 24817 / ASME PCC-2 screening estimate that requests
+an ASME B31G Level 1 Modified assessment where applicable. If the Modified
+flow-stress basis is unavailable above 483 MPa SMYS, the engine retains its
+existing Original B31G fallback; the result screen and PDF report the method
+actually used. An assessment outside B31G applicability is identified as such
+and receives zero substrate credit. The
 operator is responsible for selecting the appropriate mode only from verified
 inspection data and for escalating uncertain, interacting, clustered, or
 out-of-scope corrosion to competent engineering review.  The `>3t` assertion,

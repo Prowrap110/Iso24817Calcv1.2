@@ -14,8 +14,39 @@ class CorrosionDefectModesTest(unittest.TestCase):
     def test_default_mode_keeps_exact_v11_baseline(self):
         result = calculate_repair(**default_inputs())
         self.assertEqual(result["defect_length_basis"], "Actual defect length")
+        self.assertEqual(
+            result["calculation_basis"],
+            "ASME B31G-2023 Level 1 (Modified)",
+        )
         self.assertAlmostEqual(result["p_steel_capacity"], 9.951873620726573)
         self.assertAlmostEqual(result["iso_length"], 388.933816016055)
+
+    def test_high_smys_fallback_reports_governing_original_method(self):
+        inputs = default_inputs(yield_strength=555.0)
+        expected = assess_b31g(
+            od_mm=inputs["od"],
+            wall_mm=inputs["wall"],
+            depth_mm=inputs["wall"] - inputs["rem_wall"],
+            length_mm=inputs["length"],
+            smys_mpa=inputs["yield_strength"],
+            safety_factor=max(1.0 / inputs["design_factor"], 1.25),
+            method="modified",
+            operating_pressure_mpa=inputs["pressure"] * 0.1,
+        )
+
+        result = calculate_repair(**inputs)
+
+        self.assertEqual(expected["method"], "original")
+        self.assertAlmostEqual(result["p_steel_capacity"], expected["p_s_mpa"])
+        self.assertEqual(result["b31g_details"]["method"], "original")
+        self.assertEqual(
+            result["calculation_basis"],
+            "ASME B31G-2023 Level 1 (Original)",
+        )
+        self.assertTrue(any(
+            "falling back to Original B31G" in warning
+            for warning in result["compliance_warnings"]
+        ))
 
     def test_independent_mode_uses_ten_mm_b31g_and_full_zone_coverage(self):
         result = calculate_repair(
@@ -108,6 +139,10 @@ class CorrosionDefectModesTest(unittest.TestCase):
         self.assertEqual(items["OUTSIDE-B31G"]["credited_pressure_mpa"], 0.0)
         self.assertEqual(result["governing_defect_id"], "OUTSIDE-B31G")
         self.assertEqual(result["p_steel_capacity"], 0.0)
+        self.assertEqual(
+            result["calculation_basis"],
+            "ASME B31G-2023 Level 1 (Modified; outside applicability)",
+        )
 
     def test_candidate_warnings_include_defect_ids_and_no_exact_duplicates(self):
         result = calculate_repair(

@@ -1,5 +1,7 @@
 import unittest
 
+import pandas as pd
+
 from corrosion_defects import ACTUAL_DEFECT_LENGTH, ENTER_MANUALLY
 from calculator_form import (
     INPUT_DEFAULTS,
@@ -104,6 +106,27 @@ class CalculatorFormTest(unittest.TestCase):
 
         self.assertEqual(len(defects), 1)
         self.assertEqual(defects[0].defect_id, "D-01")
+
+    def test_manual_blank_dataframe_placeholder_is_ignored(self):
+        values = complete_values()
+        values.update({
+            "defect_length_basis": ENTER_MANUALLY,
+            "rem_": None,
+            "manual_defect_rows": pd.DataFrame([
+                {
+                    "Defect ID": float("nan"),
+                    "Individual longitudinal length [mm]": float("nan"),
+                    "Remaining wall [mm]": float("nan"),
+                    "Separation exceeds 3t": False,
+                }
+            ]),
+        })
+
+        self.assertEqual(manual_defects_from_state(values), ())
+        self.assertEqual(
+            missing_required_fields(values),
+            ["Individual defects table"],
+        )
 
     def test_new_calculation_clears_entered_values_and_results(self):
         state = {key: "entered" for key in INPUT_DEFAULTS}

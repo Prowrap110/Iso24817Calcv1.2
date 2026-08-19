@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from math import isfinite
 from typing import Any, Mapping
 
+import pandas as pd
+
 
 ACTUAL_DEFECT_LENGTH = "Actual defect length"
 INDEPENDENT_DEFECTS = "Independent defects"
@@ -54,7 +56,18 @@ def _finite_number(value: object, label: str) -> float:
 
 
 def _blank(value: object) -> bool:
-    return value is None or (isinstance(value, str) and not value.strip())
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    try:
+        missing = pd.isna(value)
+    except (TypeError, ValueError):
+        return False
+    try:
+        return bool(missing)
+    except (TypeError, ValueError):
+        return False
 
 
 def normalize_manual_defects(
@@ -65,10 +78,13 @@ def normalize_manual_defects(
         if not isinstance(record, Mapping):
             raise ValueError(f"manual defect row {row_number} must be a record")
         values = tuple(record.get(field) for field in _MANUAL_ROW_FIELDS)
-        if all(_blank(value) for value in values):
+        defect_id, length, wall, separation = values
+        if (
+            all(_blank(value) for value in (defect_id, length, wall))
+            and (_blank(separation) or separation is False)
+        ):
             continue
 
-        defect_id, length, wall, separation = values
         if _blank(defect_id):
             raise ValueError("Defect ID is required")
         if _blank(length):

@@ -22,8 +22,13 @@ The script creates or reuses `.venv-desktop`, installs the desktop dependencies,
 
 The deliverables are:
 
-- App bundle: `dist/PROWRAP ISO 24817 Calculator.app`
-- Employee ZIP: `release/PROWRAP-Calculator-macOS-arm64-M4-M5.zip`
+- App bundle: `dist/PROWRAP ISO 24817 Calculator v1.2.app`
+- Main executable: `PROWRAP ISO 24817 Calculator v1.2`
+- Employee ZIP: `release/PROWRAP-Calculator-v1.2-macOS-arm64-M4-M5.zip`
+
+These names are intentionally different from the v1.1 release, as is the
+bundle identifier. Do not rename the v1.2 bundle or archive to a v1.1 name:
+the physical separation allows both versions to remain installed side by side.
 
 The script refuses a non-arm64 host, a non-arm64 selected build Python, or a universal/Intel executable. Do not produce an employee release by bypassing those checks.
 
@@ -42,14 +47,18 @@ After the build environment has been created, rerun the same suite with:
 Run these commands from the repository root after a successful build:
 
 ```bash
-APP="dist/PROWRAP ISO 24817 Calculator.app"
-file "$APP/Contents/MacOS/PROWRAP ISO 24817 Calculator"
-lipo -archs "$APP/Contents/MacOS/PROWRAP ISO 24817 Calculator"
+APP="dist/PROWRAP ISO 24817 Calculator v1.2.app"
+file "$APP/Contents/MacOS/PROWRAP ISO 24817 Calculator v1.2"
+lipo -archs "$APP/Contents/MacOS/PROWRAP ISO 24817 Calculator v1.2"
 plutil -p "$APP/Contents/Info.plist"
 codesign --verify --deep --strict "$APP"
 ```
 
-Confirm that `lipo` reports only `arm64`, the bundle identifier is `com.protapglobal.prowrap.iso24817calculator`, the short version is `1.2`, and `LSMinimumSystemVersion` matches the build host version. The release ZIP must keep the app bundle as its top-level item.
+Confirm that `lipo` reports only `arm64`, the bundle identifier is
+`com.protapglobal.prowrap.iso24817calculator.v12`, the short version is `1.2`,
+the executable and bundle carry the v1.2 physical names above, and
+`LSMinimumSystemVersion` matches the build host version. The release ZIP must
+keep `PROWRAP ISO 24817 Calculator v1.2.app` as its top-level item.
 
 ## Distribution and first launch
 

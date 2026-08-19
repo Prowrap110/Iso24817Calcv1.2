@@ -14,6 +14,8 @@ from pathlib import Path
 from collections.abc import Callable, Sequence
 from typing import Any, Protocol
 
+from app_identity import APP_NAME
+
 
 def bundled_path(filename: str) -> Path:
     """Return a bundled file path for source and PyInstaller runtimes."""
@@ -295,7 +297,7 @@ class TkLauncherView:
         self._dispatch_lock = threading.Lock()
         self._dispatch_queue: SimpleQueue[Callable[[], None]] = SimpleQueue()
         self._closed = False
-        self.root.title("PROWRAP ISO 24817 Calculator")
+        self.root.title(APP_NAME)
         self.root.resizable(False, False)
 
         frame = ttk.Frame(self.root, padding=16)

@@ -8,6 +8,7 @@ from urllib import error
 from pathlib import Path
 from unittest import mock
 
+from app_identity import APP_NAME
 from desktop_launcher import (
     build_local_url,
     bundled_path,
@@ -287,6 +288,17 @@ class DesktopLauncherLifecycleTest(unittest.TestCase):
 
 
 class TkLauncherViewDispatchTest(unittest.TestCase):
+    def test_window_title_uses_distinct_v12_product_name(self):
+        tk_module = mock.MagicMock()
+        tk_module.NORMAL = "normal"
+        tk_module.DISABLED = "disabled"
+        tk_module.ttk = mock.MagicMock()
+
+        with mock.patch.dict(sys.modules, {"tkinter": tk_module}):
+            view = TkLauncherView()
+
+        view.root.title.assert_called_once_with(APP_NAME)
+
     def test_close_drops_queued_and_late_dispatch_callbacks(self):
         view = object.__new__(TkLauncherView)
         root = QueuedRootDouble()
