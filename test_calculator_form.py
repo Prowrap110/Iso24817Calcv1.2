@@ -82,6 +82,29 @@ class CalculatorFormTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "individual longitudinal length is required"):
             manual_defects_from_state(values)
 
+    def test_manual_defects_adapter_accepts_table_like_rows(self):
+        class TableLikeRows:
+            def __bool__(self):
+                raise ValueError("The truth value of a table is ambiguous")
+
+            def to_dict(self, orient):
+                if orient != "records":
+                    raise ValueError("table rows must be requested as records")
+                return [{
+                    "Defect ID": "D-01",
+                    "Individual longitudinal length [mm]": 10.0,
+                    "Remaining wall [mm]": 8.0,
+                    "Separation exceeds 3t": True,
+                }]
+
+        values = complete_values()
+        values["manual_defect_rows"] = TableLikeRows()
+
+        defects = manual_defects_from_state(values)
+
+        self.assertEqual(len(defects), 1)
+        self.assertEqual(defects[0].defect_id, "D-01")
+
     def test_new_calculation_clears_entered_values_and_results(self):
         state = {key: "entered" for key in INPUT_DEFAULTS}
         state.update({"calc_active": True, "force_3_layers": True})

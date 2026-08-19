@@ -107,7 +107,9 @@ def missing_required_fields(values):
 
 def manual_defects_from_state(values):
     """Normalize Streamlit manual-defect table state at the calculation boundary."""
-    records = values.get("manual_defect_rows") or []
+    records = values.get("manual_defect_rows")
+    if records is None:
+        records = []
     if hasattr(records, "to_dict"):
         records = records.to_dict("records")
     return normalize_manual_defects(records)
