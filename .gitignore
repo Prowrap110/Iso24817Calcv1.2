@@ -3,6 +3,7 @@ __pycache__/
 .venv/
 iso24817calc-venv/
 .venv-desktop/
+.worktrees/
 build/
 dist/
 release/
