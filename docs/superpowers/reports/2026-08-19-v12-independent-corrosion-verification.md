@@ -146,3 +146,287 @@ CalcBatch-v1.2 has not been created or modified in this phase. After the user
 accepts the verified v1.2 calculator, create a separate CalcBatch-v1.2
 repository and write a batch-specific specification using the verified v1.2
 engine contract. Never modify or redeploy the current CalcBatch application.
+
+## Review fix round 1: reproducible route evidence
+
+The following three commands were rerun from the isolated v1.2 repository at
+the Task 7 review-fix HEAD. Each command is self-contained, exits nonzero on
+an assertion failure, and prints a machine-readable result only after all of
+its assertions pass.
+
+### Fresh-process UI verifier
+
+Command:
+
+```bash
+python3 - 2>/dev/null <<'PY'
+import json
+from streamlit.testing.v1 import AppTest
+from calculator_form import missing_required_fields
+from prowrap_calculations import calculate_repair
+
+
+def text(app):
+    return "\n".join([e.value for e in app.markdown] + [e.value for e in app.info])
+
+
+def calculate_button(app):
+    return next(button for button in app.button if button.label == "Calculate & Optimize")
+
+
+def input_errors(app):
+    return [e.value for e in app.error if "INPUT ERROR" in e.value]
+
+
+def fill(app, mechanism="Corrosion", basis=None):
+    for key, value in {"customer": "PROTAP", "location": "Turkey", "report_no": "V12-UI"}.items():
+        app.text_input(key=key).set_value(value)
+    for key, value in {
+        "od": 1016.0, "wall": 12.0, "yield_str": 450.0,
+        "pres": 104.9, "temp": 40.0, "len_": 1000.0,
+        "rem_": 9.652, "design_life": 20, "df": 0.72,
+        "installation_temp": 20.0, "cyclic_derating_factor": 1.0,
+    }.items():
+        fields = [field for field in app.number_input if field.key == key]
+        if fields:
+            fields[0].set_value(value)
+    app.selectbox(key="type_").select(mechanism)
+    app.selectbox(key="loc_").select("External")
+    app.selectbox(key="component_type").select("Straight")
+    app.selectbox(key="axial_load_case").select(0)
+    app.run()
+    if basis is not None:
+        app.selectbox(key="defect_length_basis").select(basis).run()
+    app.number_input(key="cloth_width_mm").set_value(500.0).run()
+
+
+result = {}
+blank = AppTest.from_file("PWR110Calculator.py").run()
+assert blank.session_state["calc_active"] is False
+assert len(blank.metric) == len(blank.success) == len(blank.download_button) == 0
+assert [element.value for element in blank.title] == ["🔧 PROWRAP ISO 24817 Calculator v1.2"]
+result["blank"] = {"calc_active": False, "output": False, "v12_title": True}
+
+actual = AppTest.from_file("PWR110Calculator.py").run()
+fill(actual, basis="Actual defect length")
+calculate_button(actual).click().run()
+actual_text = text(actual)
+assert not list(actual.exception) and not input_errors(actual)
+for expected in ("**Defect Length Basis:** Actual defect length", "**B31G Candidates Assessed:** 1", "**Overall Repair-Zone Span:** 1000.0 mm", "**Governing Defect ID:** Actual/combined defect", "**B31G Assessment Length:** 1000.0 mm"):
+    assert expected in actual_text
+assert actual.metric[0].value == "12"
+result["actual"] = {"b31g_mm": 1000.0, "span_mm": 1000.0, "governing": "Actual/combined defect", "plies": 12}
+
+independent = AppTest.from_file("PWR110Calculator.py").run()
+fill(independent, basis="Independent defects")
+calculate_button(independent).click().run()
+independent_text = text(independent)
+assert not list(independent.exception) and not input_errors(independent)
+for expected in ("**Defect Length Basis:** Independent defects", "**B31G Candidates Assessed:** 1", "**Overall Repair-Zone Span:** 1000.0 mm", "**Governing Defect ID:** Independent 10x10 mm defects", "**B31G Assessment Length:** 10.0 mm", "10 mm longitudinal by 10 mm circumferential"):
+    assert expected in independent_text
+assert independent.metric[0].value == "7"
+result["independent"] = {"b31g_mm": 10.0, "span_mm": 1000.0, "assumption": "10x10 mm", "plies": 7}
+
+manual = AppTest.from_file("PWR110Calculator.py").run()
+fill(manual, basis="Enter manually")
+manual.session_state["manual_defect_rows"] = [
+    {"Defect ID": "D-01", "Individual longitudinal length [mm]": 10.0, "Remaining wall [mm]": 9.652, "Separation exceeds 3t": True},
+    {"Defect ID": "D-02", "Individual longitudinal length [mm]": 35.0, "Remaining wall [mm]": 10.0, "Separation exceeds 3t": True},
+]
+manual.run()
+calculate_button(manual).click().run()
+manual_text = text(manual)
+assert not list(manual.exception) and not input_errors(manual)
+for expected in ("**Defect Length Basis:** Enter manually", "**B31G Candidates Assessed:** 2", "**Overall Repair-Zone Span:** 1000.0 mm", "**Governing Defect ID:** D-02", "**B31G Assessment Length:** 35.0 mm"):
+    assert expected in manual_text
+assert manual.metric[0].value == "7"
+assert ["Defect ID", "B31G length [mm]", "Remaining wall [mm]", "Credited pressure [MPa]", "Governing"] in [list(element.value.columns) for element in manual.dataframe]
+result["manual"] = {"candidates": 2, "governing": "D-02", "b31g_mm": 35.0, "span_mm": 1000.0, "plies": 7}
+
+next(button for button in manual.button if button.label == "New / Clear Calculation").click().run()
+assert manual.selectbox(key="type_").value == "Select…"
+assert manual.session_state["defect_length_basis"] == "Select…"
+assert manual.session_state["manual_defect_rows"] == []
+assert manual.session_state["calc_active"] is False
+assert len(manual.metric) == 0 and "Governing Defect ID" not in text(manual)
+result["reset"] = {"mode": "Select…", "rows": 0, "calc_active": False, "stale_output": False}
+
+for mechanism in ("Dent w/crack", "Dent no-crack"):
+    app = AppTest.from_file("PWR110Calculator.py").run()
+    app.session_state["defect_length_basis"] = "Unknown non-neutral basis"
+    fill(app, mechanism=mechanism)
+    assert [box for box in app.selectbox if box.key == "defect_length_basis"] == []
+    calculate_button(app).click().run()
+    rendered = text(app)
+    assert not list(app.exception) and not input_errors(app)
+    assert "Defect Length Basis" not in rendered and "B31G" not in rendered
+    result[mechanism] = {"selector_visible": False, "injected_unknown_ignored": True, "calculated": True, "plies": int(app.metric[0].value)}
+
+unknown_state = {
+    "customer": "PROTAP", "location": "Turkey", "report_no": "V12-UNKNOWN",
+    "od": 1016.0, "wall": 12.0, "yield_str": 450.0, "pres": 104.9,
+    "temp": 40.0, "type_": "Corrosion", "loc_": "External",
+    "len_": 1000.0, "rem_": 9.652, "corr_rate": None,
+    "design_life": 20, "df": 0.72, "installation_temp": 20.0,
+    "component_type": "Straight", "cyclic_derating_factor": 1.0,
+    "axial_load_case": 0, "cloth_width_mm": 500.0,
+    "defect_length_basis": "Unknown non-neutral basis", "manual_defect_rows": [],
+}
+precheck = missing_required_fields(unknown_state)
+try:
+    calculate_repair(customer="PROTAP", location="Turkey", report_no="V12-UNKNOWN", od=1016.0, wall=12.0, pressure=104.9, temp=40.0, defect_type="Corrosion", defect_loc="External", length=1000.0, rem_wall=9.652, yield_strength=450.0, design_factor=0.72, design_life=20, cloth_width_mm=500.0, defect_length_basis="Unknown non-neutral basis")
+except ValueError as error:
+    engine_error = str(error)
+else:
+    raise AssertionError("engine accepted unsupported basis")
+assert precheck == []
+assert engine_error == "Defect length basis must be one of the exact supported choices"
+result["unknown_direct_state"] = {"form_precheck_missing": precheck, "engine_rejected": True, "error": engine_error, "ui_reachable": False}
+
+print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+PY
+```
+
+Captured output (exit 0):
+
+```json
+{"Dent no-crack":{"calculated":true,"injected_unknown_ignored":true,"plies":18,"selector_visible":false},"Dent w/crack":{"calculated":true,"injected_unknown_ignored":true,"plies":42,"selector_visible":false},"actual":{"b31g_mm":1000.0,"governing":"Actual/combined defect","plies":12,"span_mm":1000.0},"blank":{"calc_active":false,"output":false,"v12_title":true},"independent":{"assumption":"10x10 mm","b31g_mm":10.0,"plies":7,"span_mm":1000.0},"manual":{"b31g_mm":35.0,"candidates":2,"governing":"D-02","plies":7,"span_mm":1000.0},"reset":{"calc_active":false,"mode":"Select\u2026","rows":0,"stale_output":false},"unknown_direct_state":{"engine_rejected":true,"error":"Defect length basis must be one of the exact supported choices","form_precheck_missing":[],"ui_reachable":false}}
+```
+
+### Parsed-PDF verifier
+
+The complete calculation input set is declared in `base` and also emitted in
+the captured JSON. The manual input adds D-01 `(10.0 mm, 9.652 mm, separated)`
+and D-02 `(35.0 mm, 10.0 mm, separated)`.
+
+Command:
+
+```bash
+python3 - 2>/dev/null <<'PY'
+from io import BytesIO
+import json
+from pypdf import PdfReader
+from PWR110Calculator import create_pdf
+from corrosion_defects import ACTUAL_DEFECT_LENGTH, INDEPENDENT_DEFECTS, ENTER_MANUALLY, IndividualCorrosionDefect
+from prowrap_calculations import calculate_repair
+
+base = {
+    "customer": "PROTAP", "location": "Turkey", "report_no": "V12-PDF",
+    "od": 1016.0, "wall": 12.0, "pressure": 104.9, "temp": 40.0,
+    "defect_type": "Corrosion", "defect_loc": "External",
+    "length": 1000.0, "rem_wall": 9.652, "yield_strength": 450.0,
+    "design_factor": 0.72, "design_life": 20, "cloth_width_mm": 500.0,
+}
+routes = {
+    "actual": (ACTUAL_DEFECT_LENGTH, ()),
+    "independent": (INDEPENDENT_DEFECTS, ()),
+    "manual": (ENTER_MANUALLY, (
+        IndividualCorrosionDefect("D-01", 10.0, 9.652, True),
+        IndividualCorrosionDefect("D-02", 35.0, 10.0, True),
+    )),
+}
+common = [
+    "PROWRAP COMPOSITE REPAIR REPORT - v1.2",
+    "Overall Repair-Zone Span: 1000.0 mm",
+    "3t Interaction Threshold: 36.0 mm",
+    "B31G Candidates Assessed:", "Governing Defect:",
+    "B31G Assessment Length:", "B31G Assessment Remaining Wall:",
+    "Governing Credited Pressure:", "Continuous Repair Length (ISO):",
+    "Required Plies:",
+]
+required = {
+    "actual": [
+        "Defect Length Basis: Actual defect length",
+        "B31G Candidates Assessed: 1",
+        "Governing Defect: Actual/combined defect",
+        "B31G Assessment Length: 1000.0 mm",
+        "B31G Assessment Remaining Wall: 9.652 mm",
+        "The entered defect length represents a continuous or interacting corrosion feature.",
+    ],
+    "independent": [
+        "Defect Length Basis: Independent defects",
+        "B31G Candidates Assessed: 1",
+        "Governing Defect: Independent 10x10 mm defects",
+        "B31G Assessment Length: 10.0 mm",
+        "B31G Assessment Remaining Wall: 9.652 mm",
+        "Each corrosion defect is 10 mm longitudinal by 10 mm circumferential.",
+        "Each corrosion defect is separated from every other defect by more than 36 mm (3t).",
+        "Each corrosion defect uses the entered remaining wall.",
+    ],
+    "manual": [
+        "Defect Length Basis: Enter manually",
+        "B31G Candidates Assessed: 2", "Governing Defect: D-02",
+        "B31G Assessment Length: 35.0 mm",
+        "B31G Assessment Remaining Wall: 10.000 mm",
+        "Each listed corrosion defect is separated from every other defect by more than 36 mm (3t).",
+        "Individual B31G candidate assessments",
+        "D-01: 10.0 mm, remaining wall 9.652 mm",
+        "D-02: 35.0 mm, remaining wall 10.000 mm",
+    ],
+}
+expected_totals = {"actual": 16, "independent": 18, "manual": 19}
+output = {"inputs": base, "routes": {}}
+for name, (basis, rows) in routes.items():
+    report = calculate_repair(**base, defect_length_basis=basis, individual_defects=rows)
+    pdf_bytes = create_pdf(report)
+    assert pdf_bytes.startswith(b"%PDF")
+    reader = PdfReader(BytesIO(pdf_bytes))
+    parsed = "\n".join(page.extract_text() or "" for page in reader.pages)
+    checks = common + required[name]
+    missing = [field for field in checks if field not in parsed]
+    assert len(checks) == expected_totals[name]
+    assert len(reader.pages) == 2
+    assert missing == []
+    output["routes"][name] = {
+        "asserted_fields": len(checks), "pages": len(reader.pages),
+        "missing_count": len(missing), "mode": basis,
+        "governing": report["governing_defect_id"],
+        "b31g_mm": report["governing_b31g_length_mm"],
+        "span_mm": report["repair_zone_length_mm"],
+        "plies": report["num_plies"],
+    }
+print(json.dumps(output, sort_keys=True, separators=(",", ":")))
+PY
+```
+
+Captured output (exit 0):
+
+```json
+{"inputs":{"cloth_width_mm":500.0,"customer":"PROTAP","defect_loc":"External","defect_type":"Corrosion","design_factor":0.72,"design_life":20,"length":1000.0,"location":"Turkey","od":1016.0,"pressure":104.9,"rem_wall":9.652,"report_no":"V12-PDF","temp":40.0,"wall":12.0,"yield_strength":450.0},"routes":{"actual":{"asserted_fields":16,"b31g_mm":1000.0,"governing":"Actual/combined defect","missing_count":0,"mode":"Actual defect length","pages":2,"plies":12,"span_mm":1000.0},"independent":{"asserted_fields":18,"b31g_mm":10.0,"governing":"Independent 10x10 mm defects","missing_count":0,"mode":"Independent defects","pages":2,"plies":7,"span_mm":1000.0},"manual":{"asserted_fields":19,"b31g_mm":35.0,"governing":"D-02","missing_count":0,"mode":"Enter manually","pages":2,"plies":7,"span_mm":1000.0}}}
+```
+
+### Direct installed-ply verifier
+
+Command:
+
+```bash
+python3 - <<'PY'
+import json
+from corrosion_defects import ACTUAL_DEFECT_LENGTH, INDEPENDENT_DEFECTS
+from prowrap_calculations import calculate_repair
+
+base = dict(
+    customer="PROTAP", location="Turkey", report_no="V12-PLIES",
+    od=1016.0, wall=12.0, pressure=104.9, temp=40.0,
+    defect_type="Corrosion", defect_loc="External", length=1000.0,
+    rem_wall=9.652, yield_strength=450.0, design_factor=0.72,
+    design_life=20, cloth_width_mm=500.0,
+)
+output = {}
+for name, basis in (("Actual", ACTUAL_DEFECT_LENGTH), ("Independent", INDEPENDENT_DEFECTS)):
+    result = calculate_repair(**base, defect_length_basis=basis)
+    output[name] = {
+        "installed_plies": result["num_plies"],
+        "safe_substrate_mpa": result["p_steel_capacity"],
+    }
+assert output["Actual"]["installed_plies"] == 12
+assert output["Independent"]["installed_plies"] == 7
+print(json.dumps(output, sort_keys=True, separators=(",", ":")))
+PY
+```
+
+Captured output (exit 0):
+
+```json
+{"Actual":{"installed_plies":12,"safe_substrate_mpa":7.571542406120033},"Independent":{"installed_plies":7,"safe_substrate_mpa":8.82257484144555}}
+```
