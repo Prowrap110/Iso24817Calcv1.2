@@ -51,6 +51,13 @@ class CurrentCalculationBaselineTest(unittest.TestCase):
         self.assertEqual(result["proc_length"], 600)
         self.assertAlmostEqual(result["optimized_sqm"], 2.585405090198256)
         self.assertAlmostEqual(result["epoxy_kg"], 3.1024861082379074)
+        self.assertEqual(result["defect_length_basis"], "Actual defect length")
+        self.assertEqual(result["repair_zone_length_mm"], 100.0)
+        self.assertAlmostEqual(result["interaction_distance_mm"], 28.59)
+        self.assertEqual(result["governing_defect_id"], "Actual/combined defect")
+        self.assertEqual(result["governing_b31g_length_mm"], 100.0)
+        self.assertEqual(result["governing_b31g_remaining_wall_mm"], 4.5)
+        self.assertEqual(result["b31g_details"], result["b31g_assessments"][0]["assessment"])
 
     def test_force_3_layers_is_noop_now_that_iso_minimum_is_three(self):
         result = calculate_repair(**default_inputs(), force_3_layers=True)

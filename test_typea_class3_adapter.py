@@ -1,5 +1,6 @@
 import unittest
 
+from corrosion_defects import ENTER_MANUALLY, IndividualCorrosionDefect
 from prowrap_calculations import (
     apply_type_a_class3_result_to_repair,
     calculate_repair,
@@ -10,6 +11,47 @@ from prowrap_materials import PROWRAP
 
 
 class TypeAClass3AdapterTest(unittest.TestCase):
+    def test_manual_candidates_feed_conservative_wall_and_governing_credit_to_optional_check(self):
+        repair = calculate_repair(
+            customer="PROTAP",
+            location="Turkey",
+            report_no="24-152",
+            od=1016.0,
+            wall=12.0,
+            pressure=104.9,
+            temp=40.0,
+            defect_type="Corrosion",
+            defect_loc="External",
+            length=500.0,
+            rem_wall=6.0,
+            yield_strength=450.0,
+            design_factor=0.72,
+            design_life=20,
+            defect_length_basis=ENTER_MANUALLY,
+            individual_defects=(
+                IndividualCorrosionDefect("LONG-SHALLOW", 300.0, 11.0, True),
+                IndividualCorrosionDefect("SHORT-DEEP", 10.0, 6.0, True),
+            ),
+        )
+
+        iso_result = calculate_type_a_class3_prowrap_check(
+            od=repair["od"],
+            pressure_bar=repair["pressure"],
+            temp=repair["temp"],
+            rem_wall=repair["rem_wall_eol"],
+            design_life=repair["design_life"],
+            substrate_allowable_pressure_bar=substrate_credit_bar_for_iso_check(repair),
+            nominal_wall_mm=repair["wall"],
+        )
+
+        self.assertEqual(repair["governing_defect_id"], "LONG-SHALLOW")
+        self.assertEqual(repair["rem_wall_eol"], 6.0)
+        self.assertEqual(iso_result["input_summary"]["remaining_wall_mm"], 6.0)
+        self.assertAlmostEqual(
+            iso_result["input_summary"]["substrate_allowable_pressure_bar"],
+            repair["p_steel_capacity"] * 10.0,
+        )
+
     def test_adapter_maps_app_inputs_and_prowrap_data_to_typea_class3_route(self):
         result = calculate_type_a_class3_prowrap_check(
             od=457.2,
