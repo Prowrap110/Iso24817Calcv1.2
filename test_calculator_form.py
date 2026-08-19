@@ -1,15 +1,87 @@
 import unittest
 
+from corrosion_defects import ACTUAL_DEFECT_LENGTH, ENTER_MANUALLY
 from calculator_form import (
     INPUT_DEFAULTS,
     calculation_corrosion_rate,
+    initialise_inputs,
     inputs_are_complete,
+    manual_defects_from_state,
     missing_required_fields,
     new_calculation,
 )
 
 
+def complete_values():
+    values = dict(INPUT_DEFAULTS)
+    values.update({
+        "customer": "PROTAP", "location": "Turkey", "report_no": "V12-001",
+        "od": 457.2, "wall": 9.53, "yield_str": 359.0,
+        "pres": 50.0, "temp": 40.0, "type_": "Corrosion",
+        "loc_": "External", "len_": 100.0, "rem_": 4.5,
+        "design_life": 20, "df": 0.72, "installation_temp": 20.0,
+        "component_type": "Straight", "cyclic_derating_factor": 1.0,
+        "axial_load_case": 0, "cloth_width_mm": 300.0,
+        "defect_length_basis": ACTUAL_DEFECT_LENGTH,
+    })
+    return values
+
+
 class CalculatorFormTest(unittest.TestCase):
+    def test_external_corrosion_requires_length_basis(self):
+        values = complete_values()
+        values["defect_length_basis"] = "Select…"
+        self.assertIn("Defect Length Basis", missing_required_fields(values))
+
+    def test_manual_mode_uses_table_instead_of_single_remaining_wall(self):
+        values = complete_values()
+        values.update({
+            "defect_length_basis": ENTER_MANUALLY,
+            "rem_": None,
+            "manual_defect_rows": [{
+                "Defect ID": "D-01",
+                "Individual longitudinal length [mm]": 10.0,
+                "Remaining wall [mm]": 8.0,
+                "Separation exceeds 3t": True,
+            }],
+        })
+        self.assertEqual(missing_required_fields(values), [])
+
+    def test_dent_does_not_require_corrosion_basis(self):
+        values = complete_values()
+        values.update({"type_": "Dent no-crack", "defect_length_basis": "Select…"})
+        self.assertNotIn("Defect Length Basis", missing_required_fields(values))
+
+    def test_new_calculation_clears_new_mode_and_rows(self):
+        state = complete_values()
+        state.update({
+            "manual_defect_rows": [{"Defect ID": "D-01"}],
+            "calc_active": True,
+            "force_3_layers": True,
+        })
+        new_calculation(state)
+        self.assertEqual(state["defect_length_basis"], "Select…")
+        self.assertEqual(state["manual_defect_rows"], [])
+        self.assertFalse(state["calc_active"])
+        self.assertFalse(state["force_3_layers"])
+
+    def test_initialise_inputs_does_not_share_manual_rows_between_states(self):
+        first_state = {}
+        second_state = {}
+
+        initialise_inputs(first_state)
+        initialise_inputs(second_state)
+        first_state["manual_defect_rows"].append({"Defect ID": "D-01"})
+
+        self.assertEqual(second_state["manual_defect_rows"], [])
+
+    def test_manual_defects_adapter_keeps_partial_row_validation_at_boundary(self):
+        values = complete_values()
+        values["manual_defect_rows"] = [{"Defect ID": "D-01"}]
+
+        with self.assertRaisesRegex(ValueError, "individual longitudinal length is required"):
+            manual_defects_from_state(values)
+
     def test_new_calculation_clears_entered_values_and_results(self):
         state = {key: "entered" for key in INPUT_DEFAULTS}
         state.update({"calc_active": True, "force_3_layers": True})
@@ -26,31 +98,8 @@ class CalculatorFormTest(unittest.TestCase):
         self.assertFalse(inputs_are_complete(INPUT_DEFAULTS))
 
     def test_complete_form_is_ready_to_calculate(self):
-        values = dict(INPUT_DEFAULTS)
-        values.update(
-            {
-                "customer": "PROTAP",
-                "location": "Turkey",
-                "report_no": "26-001",
-                "od": 457.2,
-                "wall": 9.53,
-                "yield_str": 359.0,
-                "pres": 50.0,
-                "temp": 40.0,
-                "type_": "Corrosion",
-                "loc_": "External",
-                "len_": 100.0,
-                "rem_": 4.5,
-                "design_life": 20,
-                "df": 0.72,
-                "show_typea_class3_check": True,
-                "installation_temp": 20.0,
-                "component_type": "Straight",
-                "cyclic_derating_factor": 1.0,
-                "axial_load_case": 0,
-                "cloth_width_mm": 300.0,
-            }
-        )
+        values = complete_values()
+        values["show_typea_class3_check"] = True
 
         self.assertTrue(inputs_are_complete(values))
 
@@ -76,6 +125,7 @@ class CalculatorFormTest(unittest.TestCase):
                 "component_type": "Straight",
                 "cyclic_derating_factor": 1.0,
                 "axial_load_case": 0,
+                "defect_length_basis": ACTUAL_DEFECT_LENGTH,
             }
         )
 
