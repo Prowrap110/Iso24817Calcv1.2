@@ -1,11 +1,11 @@
-# PROWRAP ISO 24817 Calculator: macOS build guide
+# PROWRAP ISO 24817 Calculator v1.2: macOS build guide
 
-This guide is for the maintainer creating the employee macOS release. The release is an Apple Silicon (`arm64`) application for M4/M5 Macs. It is not an Intel build.
+This guide is for the maintainer creating the isolated PROWRAP ISO 24817 Calculator v1.2 employee macOS release. The release is an Apple Silicon (`arm64`) application for M4/M5 Macs. It is not an Intel build.
 
 ## Prerequisites
 
 - A macOS build host running natively on Apple Silicon (`uname -m` and the selected Python must both report `arm64`).
-- A checkout of this repository, with `python3`, `venv`, and `pip` available. Builds normally require package access on every run: the script upgrades `pip`, `setuptools`, and `wheel`, then installs `requirements-desktop.txt`. A build can run without external package access only when the needed packages are already available through a local cache or package index.
+- A checkout of the isolated v1.2 repository, with `python3`, `venv`, and `pip` available. Builds normally require package access on every run: the script upgrades `pip`, `setuptools`, and `wheel`, then installs `requirements-desktop.txt`. A build can run without external package access only when the needed packages are already available through a local cache or package index.
 - Sufficient local disk space for the virtual environment and the generated `build/`, `dist/`, and `release/` folders.
 
 Build on the macOS release you intend to support. The build script writes the actual build host's macOS version to `LSMinimumSystemVersion`; consequently, that release supports the build-host macOS release and later. It is not a claim of compatibility with older macOS releases.
@@ -49,11 +49,19 @@ plutil -p "$APP/Contents/Info.plist"
 codesign --verify --deep --strict "$APP"
 ```
 
-Confirm that `lipo` reports only `arm64`, the bundle identifier is `com.protapglobal.prowrap.iso24817calculator`, the short version is `1.1`, and `LSMinimumSystemVersion` matches the build host version. The release ZIP must keep the app bundle as its top-level item.
+Confirm that `lipo` reports only `arm64`, the bundle identifier is `com.protapglobal.prowrap.iso24817calculator`, the short version is `1.2`, and `LSMinimumSystemVersion` matches the build host version. The release ZIP must keep the app bundle as its top-level item.
 
 ## Distribution and first launch
 
 This release has no Developer ID signing and is not notarized. Treat it as an ad-hoc/unsigned distribution build, not as a signed and notarized public macOS release. The expected first-launch warning is handled by the employee's normal Control-click > **Open** flow in [EMPLOYEE_MAC_INSTALL.md](EMPLOYEE_MAC_INSTALL.md); do not direct employees to weaken macOS security settings.
+
+## Release boundary
+
+Build only from this isolated v1.2 repository. Do not use this build process to
+overwrite, rename, or redeploy Iso24817Calcv1.1 or the current CalcBatch
+project. A future CalcBatch-v1.2 is a separate project that may port the
+accepted v1.2 engine only after the v1.2 acceptance is complete; it is not
+created or deployed by this procedure.
 
 ## Platform boundary
 
