@@ -4,11 +4,19 @@ import unittest
 from pypdf import PdfReader
 
 from PWR110Calculator import create_pdf
+from corrosion_defects import ENTER_MANUALLY, INDEPENDENT_DEFECTS, IndividualCorrosionDefect
 from prowrap_calculations import calculate_repair
 from test_current_calculation_baseline import default_inputs
 
 
 class ReportWordingTest(unittest.TestCase):
+    @staticmethod
+    def _pdf_text(pdf_bytes):
+        return "\n".join(
+            page.extract_text() or ""
+            for page in PdfReader(BytesIO(pdf_bytes)).pages
+        )
+
     @staticmethod
     def _dent_report_pages(mechanism):
         report_data = calculate_repair(**default_inputs(
@@ -78,6 +86,37 @@ class ReportWordingTest(unittest.TestCase):
         self.assertIn("Repair Logic: Type B (Total Replacement)", text)
         self.assertIn("Calculation Basis: Type B full replacement", text)
         self.assertNotIn("substrate load sharing", text)
+
+    def test_independent_pdf_records_assumptions_and_two_lengths(self):
+        report = calculate_repair(
+            **default_inputs(length=1000.0, rem_wall=9.0),
+            defect_length_basis=INDEPENDENT_DEFECTS,
+        )
+
+        text = self._pdf_text(create_pdf(report))
+
+        self.assertIn("PROWRAP COMPOSITE REPAIR REPORT - v1.2", text)
+        self.assertIn("Defect Length Basis: Independent defects", text)
+        self.assertIn("Overall Repair-Zone Span: 1000.0 mm", text)
+        self.assertIn("B31G Assessment Length: 10.0 mm", text)
+        self.assertIn("10 mm longitudinal by 10 mm circumferential", text)
+
+    def test_manual_pdf_lists_candidates_and_governing_defect(self):
+        report = calculate_repair(
+            **default_inputs(length=500.0, rem_wall=6.0, wall=12.0),
+            defect_length_basis=ENTER_MANUALLY,
+            individual_defects=(
+                IndividualCorrosionDefect("D-01", 80.0, 10.5, True),
+                IndividualCorrosionDefect("D-02", 12.0, 6.0, True),
+            ),
+        )
+
+        text = self._pdf_text(create_pdf(report))
+
+        self.assertIn("Defect Length Basis: Enter manually", text)
+        self.assertIn("D-01", text)
+        self.assertIn("D-02", text)
+        self.assertIn(f"Governing Defect: {report['governing_defect_id']}", text)
 
 
 if __name__ == "__main__":

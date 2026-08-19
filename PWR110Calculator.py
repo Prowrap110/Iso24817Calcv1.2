@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from fpdf import FPDF
 
-from app_identity import APP_NAME
+from app_identity import APP_NAME, APP_VERSION
 from corrosion_defects import (
     ACTUAL_DEFECT_LENGTH,
     DEFECT_LENGTH_BASES,
@@ -60,12 +60,16 @@ def create_pdf(report_data):
     
     # Title
     pdf.set_font("Arial", 'B', 16)
-    pdf.cell(0, 10, txt="PROWRAP COMPOSITE REPAIR REPORT", ln=True, align='C')
+    pdf.cell(
+        0, 10, txt=f"PROWRAP COMPOSITE REPAIR REPORT - v{APP_VERSION}",
+        ln=True, align='C',
+    )
     pdf.set_font("Arial", 'I', 10)
     pdf.cell(0, 8, txt="Preliminary basis: selected ISO 24817 / ASME PCC-2 concepts", ln=True, align='C')
     pdf.ln(5)
 
     def add_section(title, data_dict):
+        ensure_page_space(8 + len(data_dict) * 6 + 5)
         pdf.set_font("Arial", 'B', 12)
         pdf.set_fill_color(200, 220, 255)
         pdf.cell(0, 8, txt=title, ln=True, fill=True)
@@ -74,6 +78,10 @@ def create_pdf(report_data):
             pdf.cell(90, 6, txt=safe_text(f"{key}:"), border=0)
             pdf.cell(0, 6, txt=safe_text(str(val)), ln=True, border=0)
         pdf.ln(5)
+
+    def ensure_page_space(required_height):
+        if pdf.get_y() + required_height > pdf.h - pdf.b_margin:
+            pdf.add_page()
 
     add_section("1. Project & Pipeline Data", {
         "Customer": report_data['customer'],
@@ -110,12 +118,70 @@ def create_pdf(report_data):
     defect_assessment["Composite Pressure Deficit"] = (
         f"{report_data['p_composite_design']:.2f} MPa"
     )
+    is_external_corrosion = (
+        report_data["defect_type"] == "Corrosion"
+        and report_data["defect_loc"] == "External"
+    )
+    if is_external_corrosion:
+        defect_assessment.update({
+            "Defect Length Basis": report_data["defect_length_basis"],
+            "Overall Repair-Zone Span": (
+                f"{report_data['repair_zone_length_mm']:.1f} mm"
+            ),
+            "3t Interaction Threshold": (
+                f"{report_data['interaction_distance_mm']:.1f} mm"
+            ),
+            "B31G Candidates Assessed": str(
+                len(report_data["b31g_assessments"])
+            ),
+            "Governing Defect": report_data["governing_defect_id"],
+            "B31G Assessment Length": (
+                f"{report_data['governing_b31g_length_mm']:.1f} mm"
+            ),
+            "B31G Assessment Remaining Wall": (
+                f"{report_data['governing_b31g_remaining_wall_mm']:.3f} mm"
+            ),
+            "Governing Credited Pressure": (
+                f"{report_data['p_steel_capacity']:.2f} MPa"
+            ),
+        })
     add_section("2. Defect Assessment", defect_assessment)
+
+    if is_external_corrosion:
+        assumptions = report_data["defect_basis_assumptions"]
+        candidate_assessments = report_data["b31g_assessments"]
+        candidate_lines = (
+            len(candidate_assessments)
+            if report_data["defect_length_basis"] == ENTER_MANUALLY
+            else 0
+        )
+        ensure_page_space(8 + len(assumptions) * 5 + candidate_lines * 5 + 5)
+        pdf.set_font("Arial", 'B', 10)
+        pdf.cell(0, 6, txt="Defect-basis assumptions", ln=True)
+        pdf.set_font("Arial", '', 9)
+        for assumption in assumptions:
+            pdf.multi_cell(0, 5, txt=safe_text(f"- {assumption}"))
+        if report_data["defect_length_basis"] == ENTER_MANUALLY:
+            pdf.set_font("Arial", 'B', 10)
+            pdf.cell(0, 6, txt="Individual B31G candidate assessments", ln=True)
+            pdf.set_font("Arial", '', 9)
+            for item in candidate_assessments:
+                pdf.multi_cell(
+                    0, 5,
+                    txt=safe_text(
+                        f"{item['defect_id']}: {item['length_mm']:.1f} mm, "
+                        f"remaining wall {item['remaining_wall_mm']:.3f} mm, "
+                        f"credited pressure {item['credited_pressure_mpa']:.2f} MPa"
+                    ),
+                )
+        pdf.ln(3)
 
     add_section("3. Optimized Repair Design", {
         "Required Plies": f"{report_data['num_plies']} Layers",
         "Repair Thickness": f"{report_data['final_thickness']:.2f} mm",
-        "Min. Required ISO Length": f"{report_data['iso_length']:.0f} mm",
+        "Continuous Repair Length (ISO)": (
+            f"{report_data['iso_length']:.0f} mm"
+        ),
         "Procurement Length": f"{report_data['proc_length']} mm ({report_data['num_bands']} Bands)",
         "Design Factor": f"{report_data['design_factor']}"
     })

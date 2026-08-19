@@ -196,6 +196,44 @@ class StreamlitFormSubmissionTest(unittest.TestCase):
         )
         self.assertEqual(list(app.exception), [])
 
+    def test_new_calculation_clears_manual_governing_defect_output(self):
+        app = AppTest.from_file("PWR110Calculator.py").run()
+        self._enter_complete_form_except_cloth_width(
+            app,
+            defect_length_basis="Enter manually",
+            wall=12.0,
+            defect_length=500.0,
+        )
+        app.session_state["manual_defect_rows"] = [{
+            "Defect ID": "D-01",
+            "Individual longitudinal length [mm]": 12.0,
+            "Remaining wall [mm]": 6.0,
+            "Separation exceeds 3t": True,
+        }]
+        app.run()
+        app.number_input(key="cloth_width_mm").set_value(300.0).run()
+
+        self._calculate_button(app).click().run()
+        self.assertIn(
+            "**Governing Defect ID:** D-01",
+            self._rendered_markdown(app),
+        )
+
+        next(
+            button for button in app.button
+            if button.label == "New / Clear Calculation"
+        ).click().run()
+
+        self.assertEqual(app.selectbox(key="type_").value, "Select…")
+        self.assertEqual(
+            app.session_state["defect_length_basis"], "Select…",
+        )
+        self.assertEqual(app.session_state["manual_defect_rows"], [])
+        self.assertFalse(app.session_state["calc_active"])
+        self.assertFalse(app.session_state["force_3_layers"])
+        self.assertNotIn("Governing Defect ID", self._rendered_markdown(app))
+        self.assertEqual(list(app.exception), [])
+
     def test_invalid_manual_separation_stops_with_actionable_error(self):
         app = AppTest.from_file("PWR110Calculator.py").run()
         self._enter_complete_form_except_cloth_width(
