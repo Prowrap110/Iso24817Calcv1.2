@@ -21,8 +21,10 @@ BUILD_SCRIPT_PATH = REPOSITORY_DIRECTORY / "scripts" / "build_macos.sh"
 
 CALCULATOR_MODULES = (
     "PWR110Calculator.py",
+    "app_identity.py",
     "b31g.py",
     "calculator_form.py",
+    "corrosion_defects.py",
     "iso24817_typea_class3.py",
     "prowrap_calculations.py",
     "prowrap_materials.py",
@@ -48,6 +50,12 @@ class ConstructorRecorder:
 
 
 class PackagingContractTest(unittest.TestCase):
+    def test_calculator_modules_include_v12_domain_contract(self):
+        contract = self.load_contract()
+
+        self.assertIn("app_identity.py", contract.CALCULATOR_MODULES)
+        self.assertIn("corrosion_defects.py", contract.CALCULATOR_MODULES)
+
     def load_contract(self):
         if not CONTRACT_PATH.is_file():
             self.fail(f"packaging helper does not exist: {CONTRACT_PATH.name}")
