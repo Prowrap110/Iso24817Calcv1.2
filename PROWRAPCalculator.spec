@@ -66,7 +66,7 @@ application = BUNDLE(
     name="PROWRAP ISO 24817 Calculator.app",
     icon=None,
     bundle_identifier=METADATA["bundle_id"],
-    version="1.1",
+    version="1.2",
     info_plist={
         "LSMinimumSystemVersion": MINIMUM_MACOS_VERSION,
         "NSHighResolutionCapable": True,

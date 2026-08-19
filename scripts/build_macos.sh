@@ -124,7 +124,7 @@ run_gate \
     "bundle metadata inspection" \
     inspect_bundle_metadata \
     CFBundleIdentifier com.protapglobal.prowrap.iso24817calculator \
-    CFBundleShortVersionString 1.1 \
+    CFBundleShortVersionString 1.2 \
     LSMinimumSystemVersion "$BUILD_HOST_MACOS_VERSION"
 run_gate "signature verification" codesign --verify --deep --strict "$APPLICATION_BUNDLE"
 

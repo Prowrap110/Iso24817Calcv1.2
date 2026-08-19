@@ -7,8 +7,8 @@ You do not need an internet connection or Python installation. The v1.2 calculat
 ## Install and open
 
 1. Copy `PROWRAP-Calculator-macOS-arm64-M4-M5.zip` to your Mac and double-click the ZIP file.
-2. Drag **PROWRAP ISO 24817 Calculator v1.2.app** to your **Applications** folder.
-3. The app is unsigned, so the first-launch warning is expected. For the first launch, Control-click **PROWRAP ISO 24817 Calculator v1.2.app**, choose **Open**, then confirm **Open**.
+2. Drag **PROWRAP ISO 24817 Calculator.app** to your **Applications** folder.
+3. The app is unsigned, so the first-launch warning is expected. For the first launch, Control-click **PROWRAP ISO 24817 Calculator.app**, choose **Open**, then confirm **Open**.
 4. Wait until the small launcher window says **Ready**. The calculator normally opens in your browser automatically. If it does not, select **Open Calculator** in the launcher window.
 5. Leave the small launcher window open while you are calculating. It keeps the local calculator running.
 6. When you are finished, choose **Quit** in the launcher window.

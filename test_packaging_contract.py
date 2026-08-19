@@ -209,7 +209,7 @@ class PackagingContractTest(unittest.TestCase):
             bundle_kwargs["bundle_identifier"],
             "com.protapglobal.prowrap.iso24817calculator",
         )
-        self.assertEqual(bundle_kwargs["version"], "1.1")
+        self.assertEqual(bundle_kwargs["version"], "1.2")
         self.assertEqual(
             bundle_kwargs["info_plist"],
             {

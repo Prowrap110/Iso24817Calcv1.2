@@ -37,7 +37,20 @@ class V12AcceptanceTest(unittest.TestCase):
         self.assertAlmostEqual(independent["p_steel_capacity"], 8.82257484144555)
         self.assertGreater(actual["num_plies"], independent["num_plies"])
         self.assertEqual(independent["governing_b31g_length_mm"], 10.0)
-        self.assertIn(manual["governing_defect_id"], {"D-01", "D-02"})
+        self.assertEqual(manual["governing_defect_id"], "D-02")
+        self.assertEqual(manual["governing_b31g_length_mm"], 35.0)
+        self.assertAlmostEqual(manual["p_steel_capacity"], 8.783461911867068)
+        manual_candidates = {
+            candidate["defect_id"]: candidate
+            for candidate in manual["b31g_assessments"]
+        }
+        self.assertEqual(
+            (
+                manual_candidates["D-02"]["length_mm"],
+                manual_candidates["D-02"]["remaining_wall_mm"],
+            ),
+            (35.0, 10.0),
+        )
         for result in (actual, independent, manual):
             covered_zone = (
                 result["iso_length"]
