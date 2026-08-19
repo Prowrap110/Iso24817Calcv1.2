@@ -346,6 +346,10 @@ def run_calculation(
                     f"{report_data['defect_length_basis']}"
                 )
                 st.write(
+                    "**B31G Candidates Assessed:** "
+                    f"{len(report_data['b31g_assessments'])}"
+                )
+                st.write(
                     "**Overall Repair-Zone Span:** "
                     f"{report_data['repair_zone_length_mm']:.1f} mm"
                 )

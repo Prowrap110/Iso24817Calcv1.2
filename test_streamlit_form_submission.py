@@ -114,6 +114,7 @@ class StreamlitFormSubmissionTest(unittest.TestCase):
 
         rendered = self._rendered_markdown(app)
         self.assertIn("**Defect Length Basis:** Independent defects", rendered)
+        self.assertIn("**B31G Candidates Assessed:** 1", rendered)
         self.assertIn("**B31G Assessment Length:** 10.0 mm", rendered)
         self.assertIn("**Overall Repair-Zone Span:** 1000.0 mm", rendered)
         self.assertIn(
@@ -166,6 +167,7 @@ class StreamlitFormSubmissionTest(unittest.TestCase):
 
         rendered = self._rendered_markdown(app)
         self.assertIn("**Defect Length Basis:** Enter manually", rendered)
+        self.assertIn("**B31G Candidates Assessed:** 2", rendered)
         self.assertIn("**Governing Defect ID:** LONG", rendered)
         self.assertIn("**B31G Assessment Length:** 300.0 mm", rendered)
         self.assertIn("- **Minimum Remaining Wall:** 6.0 mm", rendered)
