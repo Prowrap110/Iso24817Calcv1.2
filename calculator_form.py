@@ -1,5 +1,10 @@
 """Pure form state helpers for the Streamlit calculator."""
 
+import copy
+
+from corrosion_defects import ENTER_MANUALLY, normalize_manual_defects
+
+
 NEUTRAL_CHOICE = "Select…"
 
 INPUT_DEFAULTS = {
@@ -24,6 +29,8 @@ INPUT_DEFAULTS = {
     "cyclic_derating_factor": None,
     "axial_load_case": None,
     "cloth_width_mm": None,
+    "defect_length_basis": NEUTRAL_CHOICE,
+    "manual_defect_rows": [],
 }
 
 REQUIRED_FIELD_LABELS = (
@@ -52,13 +59,14 @@ REQUIRED_FIELD_LABELS = (
 def initialise_inputs(state):
     """Add missing blank input values without overwriting entered values."""
     for key, value in INPUT_DEFAULTS.items():
-        state.setdefault(key, value)
+        if key not in state:
+            state[key] = copy.deepcopy(value)
 
 
 def new_calculation(state):
     """Clear user-entered inputs and any displayed calculation result state."""
     for key, value in INPUT_DEFAULTS.items():
-        state[key] = value
+        state[key] = copy.deepcopy(value)
     state["calc_active"] = False
     state["force_3_layers"] = False
 
@@ -67,9 +75,27 @@ def missing_required_fields(values):
     """Return the visible labels for required fields that have no usable value."""
     missing = []
     for key, label in REQUIRED_FIELD_LABELS:
+        if (
+            key == "rem_"
+            and values.get("type_") == "Corrosion"
+            and values.get("loc_") == "External"
+            and values.get("defect_length_basis") == ENTER_MANUALLY
+        ):
+            continue
         value = values.get(key)
         if value is None or value == "" or value == NEUTRAL_CHOICE:
             missing.append(label)
+    if values.get("type_") == "Corrosion" and values.get("loc_") == "External":
+        basis = values.get("defect_length_basis")
+        if basis is None or basis == "" or basis == NEUTRAL_CHOICE:
+            missing.append("Defect Length Basis")
+        elif basis == ENTER_MANUALLY:
+            try:
+                manual_defects = manual_defects_from_state(values)
+            except ValueError:
+                manual_defects = ()
+            if not manual_defects:
+                missing.append("Individual defects table")
     if (
         values.get("type_") == "Corrosion"
         and values.get("loc_") == "Internal"
@@ -77,6 +103,16 @@ def missing_required_fields(values):
     ):
         missing.append("Internal Corrosion Rate [mm/yr]")
     return missing
+
+
+def manual_defects_from_state(values):
+    """Normalize Streamlit manual-defect table state at the calculation boundary."""
+    records = values.get("manual_defect_rows")
+    if records is None:
+        records = []
+    if hasattr(records, "to_dict"):
+        records = records.to_dict("records")
+    return normalize_manual_defects(records)
 
 
 def inputs_are_complete(values):

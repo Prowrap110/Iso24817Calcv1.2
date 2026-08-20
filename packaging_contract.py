@@ -7,11 +7,15 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
 
+from app_identity import APP_NAME, APP_VERSION
+
 
 CALCULATOR_MODULES = (
     "PWR110Calculator.py",
+    "app_identity.py",
     "b31g.py",
     "calculator_form.py",
+    "corrosion_defects.py",
     "iso24817_typea_class3.py",
     "prowrap_calculations.py",
     "prowrap_materials.py",
@@ -27,9 +31,12 @@ class PackagingInputs(NamedTuple):
 def packaging_metadata() -> dict[str, str]:
     return {
         "target_arch": "arm64",
-        "bundle_id": "com.protapglobal.prowrap.iso24817calculator",
+        "bundle_id": "com.protapglobal.prowrap.iso24817calculator.v12",
         "entry_point": "desktop_launcher.py",
-        "archive_name": "PROWRAP-Calculator-macOS-arm64-M4-M5.zip",
+        "executable_name": APP_NAME,
+        "bundle_name": f"{APP_NAME}.app",
+        "archive_name": "PROWRAP-Calculator-v1.2-macOS-arm64-M4-M5.zip",
+        "version": APP_VERSION,
     }
 
 

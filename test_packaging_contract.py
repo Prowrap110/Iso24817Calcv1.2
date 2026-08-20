@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from app_identity import APP_NAME, APP_VERSION
 from desktop_launcher import streamlit_child_args
 
 
@@ -21,8 +22,10 @@ BUILD_SCRIPT_PATH = REPOSITORY_DIRECTORY / "scripts" / "build_macos.sh"
 
 CALCULATOR_MODULES = (
     "PWR110Calculator.py",
+    "app_identity.py",
     "b31g.py",
     "calculator_form.py",
+    "corrosion_defects.py",
     "iso24817_typea_class3.py",
     "prowrap_calculations.py",
     "prowrap_materials.py",
@@ -48,6 +51,12 @@ class ConstructorRecorder:
 
 
 class PackagingContractTest(unittest.TestCase):
+    def test_calculator_modules_include_v12_domain_contract(self):
+        contract = self.load_contract()
+
+        self.assertIn("app_identity.py", contract.CALCULATOR_MODULES)
+        self.assertIn("corrosion_defects.py", contract.CALCULATOR_MODULES)
+
     def load_contract(self):
         if not CONTRACT_PATH.is_file():
             self.fail(f"packaging helper does not exist: {CONTRACT_PATH.name}")
@@ -67,9 +76,12 @@ class PackagingContractTest(unittest.TestCase):
             contract.packaging_metadata(),
             {
                 "target_arch": "arm64",
-                "bundle_id": "com.protapglobal.prowrap.iso24817calculator",
+                "bundle_id": "com.protapglobal.prowrap.iso24817calculator.v12",
                 "entry_point": "desktop_launcher.py",
-                "archive_name": "PROWRAP-Calculator-macOS-arm64-M4-M5.zip",
+                "executable_name": APP_NAME,
+                "bundle_name": f"{APP_NAME}.app",
+                "archive_name": "PROWRAP-Calculator-v1.2-macOS-arm64-M4-M5.zip",
+                "version": APP_VERSION,
             },
         )
 
@@ -191,17 +203,20 @@ class PackagingContractTest(unittest.TestCase):
         self.assertIs(exe_kwargs["console"], False)
         self.assertIs(exe_kwargs["exclude_binaries"], True)
         self.assertEqual(exe_kwargs["target_arch"], "arm64")
+        self.assertEqual(exe_kwargs["name"], APP_NAME)
         self.assertIsNone(exe_kwargs["codesign_identity"])
         self.assertIsNone(exe_kwargs["entitlements_file"])
         self.assertEqual(len(recorders["COLLECT"].calls), 1)
+        _collect_args, collect_kwargs = recorders["COLLECT"].calls[0]
+        self.assertEqual(collect_kwargs["name"], APP_NAME)
 
         _bundle_args, bundle_kwargs = recorders["BUNDLE"].calls[0]
-        self.assertEqual(bundle_kwargs["name"], "PROWRAP ISO 24817 Calculator.app")
+        self.assertEqual(bundle_kwargs["name"], f"{APP_NAME}.app")
         self.assertEqual(
             bundle_kwargs["bundle_identifier"],
-            "com.protapglobal.prowrap.iso24817calculator",
+            "com.protapglobal.prowrap.iso24817calculator.v12",
         )
-        self.assertEqual(bundle_kwargs["version"], "1.1")
+        self.assertEqual(bundle_kwargs["version"], APP_VERSION)
         self.assertEqual(
             bundle_kwargs["info_plist"],
             {
@@ -237,6 +252,12 @@ class PackagingContractTest(unittest.TestCase):
         self.assertEqual(
             completed.stdout.splitlines(),
             [
+                f"[release] app bundle: {APP_NAME}.app",
+                f"[release] executable: {APP_NAME}",
+                "[release] archive: "
+                "PROWRAP-Calculator-v1.2-macOS-arm64-M4-M5.zip",
+                "[release] bundle identifier: "
+                "com.protapglobal.prowrap.iso24817calculator.v12",
                 "[gate] full test suite",
                 "[gate] PyInstaller build",
                 "[gate] architecture inspection",

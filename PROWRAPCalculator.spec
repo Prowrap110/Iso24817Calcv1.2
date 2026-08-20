@@ -39,7 +39,7 @@ executable = EXE(
     analysis.scripts,
     [],
     exclude_binaries=True,
-    name="PROWRAP ISO 24817 Calculator",
+    name=METADATA["executable_name"],
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -58,15 +58,15 @@ collected = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name="PROWRAP ISO 24817 Calculator",
+    name=METADATA["executable_name"],
 )
 
 application = BUNDLE(
     collected,
-    name="PROWRAP ISO 24817 Calculator.app",
+    name=METADATA["bundle_name"],
     icon=None,
     bundle_identifier=METADATA["bundle_id"],
-    version="1.1",
+    version=METADATA["version"],
     info_plist={
         "LSMinimumSystemVersion": MINIMUM_MACOS_VERSION,
         "NSHighResolutionCapable": True,

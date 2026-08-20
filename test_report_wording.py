@@ -4,11 +4,24 @@ import unittest
 from pypdf import PdfReader
 
 from PWR110Calculator import create_pdf
+from corrosion_defects import (
+    ACTUAL_DEFECT_LENGTH,
+    ENTER_MANUALLY,
+    INDEPENDENT_DEFECTS,
+    IndividualCorrosionDefect,
+)
 from prowrap_calculations import calculate_repair
 from test_current_calculation_baseline import default_inputs
 
 
 class ReportWordingTest(unittest.TestCase):
+    @staticmethod
+    def _pdf_text(pdf_bytes):
+        return "\n".join(
+            page.extract_text() or ""
+            for page in PdfReader(BytesIO(pdf_bytes)).pages
+        )
+
     @staticmethod
     def _dent_report_pages(mechanism):
         report_data = calculate_repair(**default_inputs(
@@ -78,6 +91,199 @@ class ReportWordingTest(unittest.TestCase):
         self.assertIn("Repair Logic: Type B (Total Replacement)", text)
         self.assertIn("Calculation Basis: Type B full replacement", text)
         self.assertNotIn("substrate load sharing", text)
+
+    def test_independent_pdf_records_assumptions_and_two_lengths(self):
+        report = calculate_repair(
+            **default_inputs(length=1000.0, rem_wall=9.0),
+            defect_length_basis=INDEPENDENT_DEFECTS,
+        )
+
+        text = self._pdf_text(create_pdf(report))
+
+        self.assertIn("PROWRAP COMPOSITE REPAIR REPORT - v1.2", text)
+        self.assertIn("Defect Length Basis: Independent defects", text)
+        self.assertIn("Overall Repair-Zone Span: 1000.0 mm", text)
+        self.assertIn("B31G Assessment Length: 10.0 mm", text)
+        self.assertIn("10 mm longitudinal by 10 mm circumferential", text)
+        self.assertIn(
+            "Calculation Basis: ASME B31G-2023 Level 1 (Modified)", text,
+        )
+        self.assertIn(
+            "Substrate MAWP (p_s) per ASME B31G-2023 Level 1 (Modified)",
+            text,
+        )
+
+    def test_high_smys_pdf_reports_original_method_and_fallback_warning(self):
+        report = calculate_repair(
+            **default_inputs(yield_strength=555.0),
+            defect_length_basis=ACTUAL_DEFECT_LENGTH,
+        )
+
+        text = self._pdf_text(create_pdf(report))
+
+        self.assertIn(
+            "Calculation Basis: ASME B31G-2023 Level 1 (Original)", text,
+        )
+        self.assertIn(
+            "Substrate MAWP (p_s) per ASME B31G-2023 Level 1 (Original)",
+            text,
+        )
+        self.assertIn(
+            "falling back to Original B31G",
+            " ".join(text.split()),
+        )
+
+    def test_manual_pdf_lists_candidates_and_governing_defect(self):
+        report = calculate_repair(
+            **default_inputs(length=500.0, rem_wall=6.0, wall=12.0),
+            defect_length_basis=ENTER_MANUALLY,
+            individual_defects=(
+                IndividualCorrosionDefect("D-01", 80.0, 10.5, True),
+                IndividualCorrosionDefect("D-02", 12.0, 6.0, True),
+            ),
+        )
+
+        text = self._pdf_text(create_pdf(report))
+
+        self.assertIn("Defect Length Basis: Enter manually", text)
+        self.assertIn(f"Governing Defect: {report['governing_defect_id']}", text)
+        table = text.split("Individual B31G candidate assessments", 1)[1]
+        table = table.split("3. Optimized Repair Design", 1)[0]
+        for heading in (
+            "Defect ID",
+            "Length [mm]",
+            "Wall [mm]",
+            "Method",
+            "Applicable",
+            "Credit [MPa]",
+            "Governing",
+        ):
+            with self.subTest(heading=heading):
+                self.assertIn(heading, table)
+        for value in (
+            "D-01",
+            "80.0",
+            "10.500",
+            "D-02",
+            "12.0",
+            "6.000",
+            "Modified",
+        ):
+            with self.subTest(value=value):
+                self.assertIn(value, table)
+
+    def test_manual_pdf_table_repeats_headers_and_preserves_following_section(self):
+        defects = tuple(
+            IndividualCorrosionDefect(
+                f"D-{index:02d}",
+                10.0 + index,
+                6.0 + (index % 5) * 0.5,
+                True,
+            )
+            for index in range(1, 29)
+        )
+        report = calculate_repair(
+            **default_inputs(length=500.0, rem_wall=6.0, wall=12.0),
+            defect_length_basis=ENTER_MANUALLY,
+            individual_defects=defects,
+        )
+
+        reader = PdfReader(BytesIO(create_pdf(report)))
+        pages = [page.extract_text() or "" for page in reader.pages]
+        text = "\n".join(pages)
+
+        for index in range(1, 29):
+            self.assertIn(f"D-{index:02d}", text)
+        table_header_pages = [
+            page for page in pages
+            if "Applicable" in page and "Credit [MPa]" in page
+        ]
+        self.assertGreaterEqual(len(table_header_pages), 2)
+        self.assertTrue(any(
+            "5. Installation Checklist (Method Statement)" in page
+            and "5. Quality Control:" in page
+            for page in pages
+        ))
+
+    def test_all_external_corrosion_pdf_routes_include_traceability_fields(self):
+        base = default_inputs(
+            od=1016.0,
+            wall=12.0,
+            pressure=104.9,
+            length=1000.0,
+            rem_wall=9.652,
+            yield_strength=450.0,
+            cloth_width_mm=500.0,
+        )
+        routes = {
+            "actual": (ACTUAL_DEFECT_LENGTH, ()),
+            "independent": (INDEPENDENT_DEFECTS, ()),
+            "manual": (
+                ENTER_MANUALLY,
+                (
+                    IndividualCorrosionDefect("D-01", 10.0, 9.652, True),
+                    IndividualCorrosionDefect("D-02", 35.0, 10.0, True),
+                ),
+            ),
+        }
+        common = (
+            "PROWRAP COMPOSITE REPAIR REPORT - v1.2",
+            "Overall Repair-Zone Span: 1000.0 mm",
+            "3t Interaction Threshold: 36.0 mm",
+            "B31G Candidates Assessed:",
+            "Governing Defect:",
+            "B31G Assessment Length:",
+            "B31G Assessment Remaining Wall:",
+            "Governing Credited Pressure:",
+            "Continuous Repair Length (ISO):",
+            "Required Plies:",
+            "Calculation Basis: ASME B31G-2023 Level 1 (Modified)",
+        )
+        route_fields = {
+            "actual": (
+                "Defect Length Basis: Actual defect length",
+                "B31G Candidates Assessed: 1",
+                "Governing Defect: Actual/combined defect",
+                "B31G Assessment Length: 1000.0 mm",
+                "B31G Assessment Remaining Wall: 9.652 mm",
+                "continuous or interacting corrosion feature",
+            ),
+            "independent": (
+                "Defect Length Basis: Independent defects",
+                "B31G Candidates Assessed: 1",
+                "Governing Defect: Independent 10x10 mm defects",
+                "B31G Assessment Length: 10.0 mm",
+                "10 mm longitudinal by 10 mm circumferential",
+                "more than 36 mm (3t)",
+                "uses the entered remaining wall",
+            ),
+            "manual": (
+                "Defect Length Basis: Enter manually",
+                "B31G Candidates Assessed: 2",
+                "Governing Defect: D-02",
+                "B31G Assessment Length: 35.0 mm",
+                "B31G Assessment Remaining Wall: 10.000 mm",
+                "more than 36 mm (3t)",
+                "Individual B31G candidate assessments",
+                "D-01",
+                "D-02",
+            ),
+        }
+
+        for route, (basis, defects) in routes.items():
+            with self.subTest(route=route):
+                report = calculate_repair(
+                    **base,
+                    defect_length_basis=basis,
+                    individual_defects=defects,
+                )
+                reader = PdfReader(BytesIO(create_pdf(report)))
+                text = "\n".join(
+                    page.extract_text() or "" for page in reader.pages
+                )
+                self.assertEqual(len(reader.pages), 2)
+                for field in (*common, *route_fields[route]):
+                    self.assertIn(field, text)
 
 
 if __name__ == "__main__":

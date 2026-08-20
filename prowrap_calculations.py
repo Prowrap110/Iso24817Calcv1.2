@@ -3,6 +3,10 @@
 import math
 
 from b31g import assess_b31g
+from corrosion_defects import (
+    ACTUAL_DEFECT_LENGTH,
+    build_corrosion_assessment_plan,
+)
 from iso24817_typea_class3 import TypeAClass3Inputs, calculate_type_a_class3
 from prowrap_materials import PROWRAP
 from prowrap_mechanisms import DENT_NO_CRACK, DENT_WITH_CRACK, normalize_mechanism
@@ -337,6 +341,8 @@ def calculate_repair(
     cyclic_derating_factor=1.0,
     axial_load_case=0,
     cloth_width_mm=PROWRAP["cloth_width_mm"],
+    defect_length_basis=ACTUAL_DEFECT_LENGTH,
+    individual_defects=(),
 ):
     """Calculate repair outputs (baseline route).
 
@@ -390,13 +396,35 @@ def calculate_repair(
             "Prowrap CF cloth width must exceed the 50 mm stitch overlap."
         )
 
-    wall_loss_ratio = (wall - rem_wall) / wall
+    applied_basis = ACTUAL_DEFECT_LENGTH
+    repair_zone_length_mm = length
+    interaction_distance_mm = 3.0 * wall
+    defect_basis_assumptions = ()
+    corrosion_plan = None
+    assessment_remaining_wall = rem_wall
+    if defect_type == "Corrosion" and defect_loc == "External":
+        corrosion_plan = build_corrosion_assessment_plan(
+            basis=defect_length_basis,
+            repair_zone_length_mm=length,
+            nominal_wall_mm=wall,
+            default_remaining_wall_mm=rem_wall,
+            manual_defects=tuple(individual_defects),
+        )
+        applied_basis = corrosion_plan.basis
+        repair_zone_length_mm = corrosion_plan.repair_zone_length_mm
+        interaction_distance_mm = corrosion_plan.interaction_distance_mm
+        defect_basis_assumptions = corrosion_plan.assumptions
+        assessment_remaining_wall = corrosion_plan.minimum_remaining_wall_mm
+
+    wall_loss_ratio = (wall - assessment_remaining_wall) / wall
 
     # Remaining wall projected to END of repair design life (ISO 24817 7.3):
     # external corrosion is sealed by the repair (rate 0); internal
     # corrosion keeps growing under the laminate at the given rate.
     if defect_type == "Corrosion" and defect_loc == "Internal":
         rem_wall_eol = max(rem_wall - internal_corrosion_rate * design_life, 0.0)
+    elif defect_type == "Corrosion" and defect_loc == "External":
+        rem_wall_eol = assessment_remaining_wall
     else:
         rem_wall_eol = rem_wall
     has_no_substrate_capacity = rem_wall_eol < 1.0
@@ -450,9 +478,50 @@ def calculate_repair(
     # (external corrosion sealed by the repair). Type B (internal, crack,
     # leak, < 1 mm projected wall) takes no substrate credit.
     b31g_details = None
+    b31g_assessments = []
+    governing_id = None
+    governing_length = None
+    governing_wall = None
     p_steel_capacity = 0.0
     allowable_pipe_stress_mpa = None
-    if defect_type == "Corrosion" and not has_no_substrate_capacity:
+    if corrosion_plan is not None:
+        for defect in corrosion_plan.candidates:
+            assessment = assess_b31g(
+                od_mm=od,
+                wall_mm=wall,
+                depth_mm=wall - defect.remaining_wall_mm,
+                length_mm=defect.longitudinal_length_mm,
+                smys_mpa=yield_strength,
+                safety_factor=max(1.0 / design_factor, 1.25),
+                method="modified",
+                operating_pressure_mpa=pressure_mpa,
+            )
+            credited_pressure = (
+                assessment["p_s_mpa"]
+                if assessment["applicable"] and defect.remaining_wall_mm >= 1.0
+                else 0.0
+            )
+            b31g_assessments.append(
+                {
+                    "defect_id": defect.defect_id,
+                    "length_mm": defect.longitudinal_length_mm,
+                    "remaining_wall_mm": defect.remaining_wall_mm,
+                    "credited_pressure_mpa": credited_pressure,
+                    "assessment": assessment,
+                }
+            )
+
+        governing = min(
+            b31g_assessments,
+            key=lambda item: item["credited_pressure_mpa"],
+        )
+        governing_id = governing["defect_id"]
+        governing_length = governing["length_mm"]
+        governing_wall = governing["remaining_wall_mm"]
+        b31g_details = governing["assessment"]
+        if "Type A" in calc_method_thick:
+            p_steel_capacity = governing["credited_pressure_mpa"]
+    elif defect_type == "Corrosion" and not has_no_substrate_capacity:
         # Depth is taken at END of design life (internal corrosion
         # projected at the given rate; external sealed by the repair).
         b31g_details = assess_b31g(
@@ -477,6 +546,19 @@ def calculate_repair(
         )
         allowable_pipe_stress_mpa = pipe_basis["allowable_stress_mpa"]
         p_steel_capacity = pipe_basis["allowable_pressure_mpa"]
+
+    if (
+        b31g_details is not None
+        and calculation_basis.startswith("ASME B31G")
+    ):
+        method_label = b31g_details["method"].title()
+        applicability_label = (
+            "" if b31g_details["applicable"] else "; outside applicability"
+        )
+        calculation_basis = (
+            "ASME B31G-2023 Level 1 "
+            f"({method_label}{applicability_label})"
+        )
 
     if "Type A" in calc_method_thick and p_steel_capacity > 0:
         p_composite_design = max(0, pressure_mpa - p_steel_capacity)
@@ -628,7 +710,28 @@ def calculate_repair(
                 "The Type B result is outside the validated range - an "
                 "engineered assessment is required."
             )
-    if b31g_details is not None:
+    if b31g_assessments:
+        for item in b31g_assessments:
+            defect_prefix = f"Defect ID {item['defect_id']}: "
+            assessment = item["assessment"]
+            compliance_warnings.extend(
+                f"{defect_prefix}B31G: {warning}"
+                for warning in assessment["warnings"]
+            )
+            if item["remaining_wall_mm"] < 1.0:
+                compliance_warnings.append(
+                    f"{defect_prefix}remaining wall is below 1 mm; no "
+                    "substrate pressure credit is taken."
+                )
+            if assessment["applicable"] and not assessment["acceptable"]:
+                compliance_warnings.append(
+                    f"{defect_prefix}B31G Level 1: the corroded pipe alone "
+                    "is NOT acceptable at the design pressure "
+                    f"(safe pressure P_S = {assessment['p_s_mpa']:.2f} MPa < "
+                    f"{pressure_mpa:.2f} MPa) - the composite repair is "
+                    "structural, not just preventive."
+                )
+    elif b31g_details is not None:
         compliance_warnings.extend(
             f"B31G: {w}" for w in b31g_details["warnings"]
         )
@@ -672,6 +775,7 @@ def calculate_repair(
             "Repair thickness exceeds D/12: the thin-wall design formulae "
             "of ISO 24817 are not valid for this repair."
         )
+    compliance_warnings = list(dict.fromkeys(compliance_warnings))
 
     return {
         "customer": customer,
@@ -720,6 +824,14 @@ def calculate_repair(
         "typea_design": typea_design,
         "type_b_details": type_b_details,
         "b31g_details": b31g_details,
+        "defect_length_basis": applied_basis,
+        "repair_zone_length_mm": repair_zone_length_mm,
+        "interaction_distance_mm": interaction_distance_mm,
+        "defect_basis_assumptions": defect_basis_assumptions,
+        "b31g_assessments": tuple(b31g_assessments),
+        "governing_defect_id": governing_id,
+        "governing_b31g_length_mm": governing_length,
+        "governing_b31g_remaining_wall_mm": governing_wall,
         "thickness_check_ok": thickness_check_ok,
         "compliance_warnings": compliance_warnings,
         "num_bands": num_bands,
@@ -791,6 +903,7 @@ def calculate_type_a_class3_prowrap_check(
     result = calculate_type_a_class3(inputs)
     result["input_summary"] = {
         "pressure_bar": pressure_bar,
+        "remaining_wall_mm": rem_wall,
         "substrate_allowable_pressure_bar": substrate_allowable_pressure_bar,
         "hoop_modulus_mpa": PROWRAP["modulus_circ"],
         "axial_modulus_mpa": PROWRAP["modulus_axial"],

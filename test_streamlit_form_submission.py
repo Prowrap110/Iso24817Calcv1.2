@@ -17,7 +17,14 @@ class StreamlitFormSubmissionTest(unittest.TestCase):
 
     @staticmethod
     def _enter_complete_form_except_cloth_width(
-        app, mechanism="Corrosion", remaining_wall=4.5,
+        app,
+        mechanism="Corrosion",
+        remaining_wall=4.5,
+        defect_length_basis="Actual defect length",
+        od=457.2,
+        wall=9.53,
+        yield_strength=359.0,
+        defect_length=100.0,
     ):
         for key, value in {
             "customer": "PROTAP",
@@ -27,12 +34,12 @@ class StreamlitFormSubmissionTest(unittest.TestCase):
             app.text_input(key=key).set_value(value)
 
         for key, value in {
-            "od": 457.2,
-            "wall": 9.53,
-            "yield_str": 359.0,
+            "od": od,
+            "wall": wall,
+            "yield_str": yield_strength,
             "pres": 50.0,
             "temp": 40.0,
-            "len_": 100.0,
+            "len_": defect_length,
             "rem_": remaining_wall,
             "design_life": 20,
             "df": 0.72,
@@ -46,10 +53,15 @@ class StreamlitFormSubmissionTest(unittest.TestCase):
         app.selectbox(key="component_type").select("Straight")
         app.selectbox(key="axial_load_case").select(0)
         app.run()
+        if mechanism == "Corrosion":
+            app.selectbox(key="defect_length_basis").select(
+                defect_length_basis
+            ).run()
 
     @staticmethod
     def _rendered_markdown(app):
-        return "\n".join(element.value for element in app.markdown)
+        elements = [*app.markdown, *app.info]
+        return "\n".join(element.value for element in elements)
 
     def test_mechanism_selector_uses_the_two_canonical_dent_choices(self):
         app = AppTest.from_file("PWR110Calculator.py").run()
@@ -68,6 +80,259 @@ class StreamlitFormSubmissionTest(unittest.TestCase):
             ],
         )
         self.assertNotIn("Dent", mechanism.options)
+
+    def test_external_corrosion_shows_exact_three_basis_options(self):
+        app = AppTest.from_file("PWR110Calculator.py").run()
+        app.selectbox(key="type_").select("Corrosion")
+        app.selectbox(key="loc_").select("External").run()
+        self.assertEqual(app.selectbox(key="defect_length_basis").options, [
+            "Select…", "Actual defect length", "Independent defects",
+            "Enter manually",
+        ])
+
+    def test_defect_length_guidance_changes_by_mode_and_selector_follows_field(self):
+        expected_guidance = {
+            "Actual defect length": (
+                "Defect Length is the longitudinal length of the continuous "
+                "or combined interacting flaw."
+            ),
+            "Independent defects": (
+                "Defect Length is the complete outer-to-outer repair-zone "
+                "span for the overall continuous repair."
+            ),
+            "Enter manually": (
+                "Defect Length is the complete outer-to-outer repair-zone "
+                "span for the overall continuous repair."
+            ),
+        }
+
+        for basis, guidance in expected_guidance.items():
+            with self.subTest(basis=basis):
+                app = AppTest.from_file("PWR110Calculator.py").run()
+                app.selectbox(key="type_").select("Corrosion")
+                app.selectbox(key="loc_").select("External").run()
+                sidebar_elements = list(app.sidebar)[1:]
+                field_index = next(
+                    index for index, element in enumerate(sidebar_elements)
+                    if getattr(element, "key", None) == "len_"
+                )
+                selector_index = next(
+                    index for index, element in enumerate(sidebar_elements)
+                    if getattr(element, "key", None) == "defect_length_basis"
+                )
+                self.assertEqual(selector_index, field_index + 1)
+
+                app.selectbox(key="defect_length_basis").select(basis).run()
+
+                self.assertIn(
+                    guidance,
+                    [caption.value for caption in app.caption],
+                )
+
+    def test_dent_does_not_show_corrosion_basis(self):
+        app = AppTest.from_file("PWR110Calculator.py").run()
+        app.selectbox(key="type_").select("Dent no-crack")
+        app.selectbox(key="loc_").select("External").run()
+        self.assertEqual(
+            [box for box in app.selectbox if box.key == "defect_length_basis"],
+            [],
+        )
+        captions = [caption.value for caption in app.caption]
+        self.assertFalse(any(
+            caption.startswith("Defect Length is") for caption in captions
+        ))
+
+    def test_independent_mode_shows_assumptions_and_governing_dimensions(self):
+        app = AppTest.from_file("PWR110Calculator.py").run()
+        self._enter_complete_form_except_cloth_width(
+            app,
+            defect_length_basis="Independent defects",
+            od=1016.0,
+            wall=12.0,
+            remaining_wall=9.652,
+            defect_length=1000.0,
+        )
+        app.number_input(key="cloth_width_mm").set_value(300.0).run()
+
+        self._calculate_button(app).click().run()
+
+        rendered = self._rendered_markdown(app)
+        self.assertIn("**Defect Length Basis:** Independent defects", rendered)
+        self.assertIn(
+            "**Calculation Basis:** ASME B31G-2023 Level 1 (Modified)",
+            rendered,
+        )
+        self.assertIn("**B31G Candidates Assessed:** 1", rendered)
+        self.assertIn("**B31G Assessment Length:** 10.0 mm", rendered)
+        self.assertIn("**Overall Repair-Zone Span:** 1000.0 mm", rendered)
+        self.assertIn(
+            "10 mm longitudinal by 10 mm circumferential", rendered,
+        )
+        self.assertEqual(list(app.exception), [])
+
+    def test_high_smys_screen_reports_original_b31g_fallback(self):
+        app = AppTest.from_file("PWR110Calculator.py").run()
+        self._enter_complete_form_except_cloth_width(
+            app,
+            yield_strength=555.0,
+            defect_length_basis="Actual defect length",
+        )
+        app.number_input(key="cloth_width_mm").set_value(300.0).run()
+
+        self._calculate_button(app).click().run()
+
+        rendered = self._rendered_markdown(app)
+        self.assertIn(
+            "**Calculation Basis:** ASME B31G-2023 Level 1 (Original)",
+            rendered,
+        )
+        self.assertIn(
+            "**Substrate MAWP p_s (ASME B31G Original,", rendered,
+        )
+        self.assertTrue(any(
+            "falling back to Original B31G" in error.value
+            for error in app.error
+        ))
+        self.assertEqual(list(app.exception), [])
+
+    def test_manual_mode_hides_scalar_wall_and_shows_calculated_3t(self):
+        app = AppTest.from_file("PWR110Calculator.py").run()
+        app.number_input(key="wall").set_value(12.0)
+        app.selectbox(key="type_").select("Corrosion")
+        app.selectbox(key="loc_").select("External").run()
+        app.selectbox(key="defect_length_basis").select("Enter manually").run()
+
+        self.assertEqual(
+            [field for field in app.number_input if field.key == "rem_"],
+            [],
+        )
+        self.assertIn(
+            "3t Interaction Threshold: 36.0 mm",
+            [caption.value for caption in app.caption],
+        )
+
+    def test_manual_mode_preserves_pairs_and_displays_assessment_table(self):
+        app = AppTest.from_file("PWR110Calculator.py").run()
+        self._enter_complete_form_except_cloth_width(
+            app,
+            defect_length_basis="Enter manually",
+            wall=12.0,
+            defect_length=500.0,
+        )
+        app.session_state["manual_defect_rows"] = [
+            {
+                "Defect ID": "LONG",
+                "Individual longitudinal length [mm]": 300.0,
+                "Remaining wall [mm]": 11.0,
+                "Separation exceeds 3t": True,
+            },
+            {
+                "Defect ID": "DEEP",
+                "Individual longitudinal length [mm]": 10.0,
+                "Remaining wall [mm]": 6.0,
+                "Separation exceeds 3t": True,
+            },
+        ]
+        app.run()
+        app.number_input(key="cloth_width_mm").set_value(300.0).run()
+
+        self._calculate_button(app).click().run()
+
+        rendered = self._rendered_markdown(app)
+        self.assertIn("**Defect Length Basis:** Enter manually", rendered)
+        self.assertIn("**B31G Candidates Assessed:** 2", rendered)
+        self.assertIn("**Governing Defect ID:** LONG", rendered)
+        self.assertIn("**B31G Assessment Length:** 300.0 mm", rendered)
+        self.assertIn("- **Minimum Remaining Wall:** 6.0 mm", rendered)
+        self.assertIn("- **Overall Repair-Zone Span:** 500.0 mm", rendered)
+        dataframe_columns = [
+            list(element.value.columns) for element in app.dataframe
+        ]
+        self.assertIn(
+            [
+                "Defect ID",
+                "Individual longitudinal length [mm]",
+                "Remaining wall [mm]",
+                "Separation exceeds 3t",
+            ],
+            dataframe_columns,
+        )
+        self.assertIn(
+            [
+                "Defect ID",
+                "B31G length [mm]",
+                "Remaining wall [mm]",
+                "Credited pressure [MPa]",
+                "Governing",
+            ],
+            dataframe_columns,
+        )
+        self.assertEqual(list(app.exception), [])
+
+    def test_new_calculation_clears_manual_governing_defect_output(self):
+        app = AppTest.from_file("PWR110Calculator.py").run()
+        self._enter_complete_form_except_cloth_width(
+            app,
+            defect_length_basis="Enter manually",
+            wall=12.0,
+            defect_length=500.0,
+        )
+        app.session_state["manual_defect_rows"] = [{
+            "Defect ID": "D-01",
+            "Individual longitudinal length [mm]": 12.0,
+            "Remaining wall [mm]": 6.0,
+            "Separation exceeds 3t": True,
+        }]
+        app.run()
+        app.number_input(key="cloth_width_mm").set_value(300.0).run()
+
+        self._calculate_button(app).click().run()
+        self.assertIn(
+            "**Governing Defect ID:** D-01",
+            self._rendered_markdown(app),
+        )
+
+        next(
+            button for button in app.button
+            if button.label == "New / Clear Calculation"
+        ).click().run()
+
+        self.assertEqual(app.selectbox(key="type_").value, "Select…")
+        self.assertEqual(
+            app.session_state["defect_length_basis"], "Select…",
+        )
+        self.assertEqual(app.session_state["manual_defect_rows"], [])
+        self.assertFalse(app.session_state["calc_active"])
+        self.assertFalse(app.session_state["force_3_layers"])
+        self.assertNotIn("Governing Defect ID", self._rendered_markdown(app))
+        self.assertEqual(list(app.exception), [])
+
+    def test_invalid_manual_separation_stops_with_actionable_error(self):
+        app = AppTest.from_file("PWR110Calculator.py").run()
+        self._enter_complete_form_except_cloth_width(
+            app,
+            defect_length_basis="Enter manually",
+            wall=12.0,
+            defect_length=500.0,
+        )
+        app.session_state["manual_defect_rows"] = [{
+            "Defect ID": "D-01",
+            "Individual longitudinal length [mm]": 10.0,
+            "Remaining wall [mm]": 6.0,
+            "Separation exceeds 3t": False,
+        }]
+        app.run()
+        app.number_input(key="cloth_width_mm").set_value(300.0).run()
+
+        self._calculate_button(app).click().run()
+
+        self.assertIn(
+            "**INPUT ERROR:** Each defect must be confirmed as separated "
+            "by more than 3t",
+            [error.value for error in app.error],
+        )
+        self.assertFalse(app.session_state["calc_active"])
+        self.assertEqual(list(app.exception), [])
 
     def test_dent_with_crack_displays_full_pressure_laminate_basis(self):
         app = AppTest.from_file("PWR110Calculator.py").run()

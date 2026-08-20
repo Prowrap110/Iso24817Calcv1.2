@@ -4,10 +4,14 @@ set -euo pipefail
 
 REPOSITORY_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VIRTUAL_ENVIRONMENT="$REPOSITORY_DIRECTORY/.venv-desktop"
-APPLICATION_BUNDLE="$REPOSITORY_DIRECTORY/dist/PROWRAP ISO 24817 Calculator.app"
-MAIN_EXECUTABLE="$APPLICATION_BUNDLE/Contents/MacOS/PROWRAP ISO 24817 Calculator"
+PROWRAP_EXECUTABLE_NAME="PROWRAP ISO 24817 Calculator v1.2"
+PROWRAP_BUNDLE_NAME="$PROWRAP_EXECUTABLE_NAME.app"
+PROWRAP_BUNDLE_IDENTIFIER="com.protapglobal.prowrap.iso24817calculator.v12"
+PROWRAP_ARCHIVE_NAME="PROWRAP-Calculator-v1.2-macOS-arm64-M4-M5.zip"
+APPLICATION_BUNDLE="$REPOSITORY_DIRECTORY/dist/$PROWRAP_BUNDLE_NAME"
+MAIN_EXECUTABLE="$APPLICATION_BUNDLE/Contents/MacOS/$PROWRAP_EXECUTABLE_NAME"
 INFO_PLIST="$APPLICATION_BUNDLE/Contents/Info.plist"
-ARCHIVE="$REPOSITORY_DIRECTORY/release/PROWRAP-Calculator-macOS-arm64-M4-M5.zip"
+ARCHIVE="$REPOSITORY_DIRECTORY/release/$PROWRAP_ARCHIVE_NAME"
 DRY_RUN=false
 
 if [[ $# -gt 1 ]] || [[ $# -eq 1 && "$1" != "--dry-run" ]]; then
@@ -89,6 +93,10 @@ if [[ "$DRY_RUN" == true ]]; then
     python3 -c \
         'from packaging_contract import require_arm64_only_mach_o; import sys; require_arm64_only_mach_o(sys.argv[1])' \
         "$MAIN_ARCHITECTURES"
+    printf '[release] app bundle: %s\n' "$PROWRAP_BUNDLE_NAME"
+    printf '[release] executable: %s\n' "$PROWRAP_EXECUTABLE_NAME"
+    printf '[release] archive: %s\n' "$PROWRAP_ARCHIVE_NAME"
+    printf '[release] bundle identifier: %s\n' "$PROWRAP_BUNDLE_IDENTIFIER"
     run_gate "full test suite" true
     run_gate "PyInstaller build" true
     run_gate "architecture inspection" true
@@ -123,8 +131,8 @@ run_gate "architecture inspection" inspect_architecture
 run_gate \
     "bundle metadata inspection" \
     inspect_bundle_metadata \
-    CFBundleIdentifier com.protapglobal.prowrap.iso24817calculator \
-    CFBundleShortVersionString 1.1 \
+    CFBundleIdentifier "$PROWRAP_BUNDLE_IDENTIFIER" \
+    CFBundleShortVersionString 1.2 \
     LSMinimumSystemVersion "$BUILD_HOST_MACOS_VERSION"
 run_gate "signature verification" codesign --verify --deep --strict "$APPLICATION_BUNDLE"
 

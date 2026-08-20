@@ -1,6 +1,14 @@
 import streamlit as st
+import pandas as pd
 from fpdf import FPDF
 
+from app_identity import APP_NAME, APP_VERSION
+from corrosion_defects import (
+    ACTUAL_DEFECT_LENGTH,
+    DEFECT_LENGTH_BASES,
+    ENTER_MANUALLY,
+    INDEPENDENT_DEFECTS,
+)
 from prowrap_calculations import (
     apply_type_a_class3_result_to_repair,
     calculate_repair,
@@ -13,13 +21,21 @@ from calculator_form import (
     NEUTRAL_CHOICE,
     calculation_corrosion_rate,
     initialise_inputs,
+    manual_defects_from_state,
     missing_required_fields,
     new_calculation,
 )
 
+MANUAL_DEFECT_COLUMNS = (
+    "Defect ID",
+    "Individual longitudinal length [mm]",
+    "Remaining wall [mm]",
+    "Separation exceeds 3t",
+)
+
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Prowrap Master Calculator",
+    page_title=APP_NAME,
     page_icon="🔧",
     layout="wide"
 )
@@ -44,12 +60,16 @@ def create_pdf(report_data):
     
     # Title
     pdf.set_font("Arial", 'B', 16)
-    pdf.cell(0, 10, txt="PROWRAP COMPOSITE REPAIR REPORT", ln=True, align='C')
+    pdf.cell(
+        0, 10, txt=f"PROWRAP COMPOSITE REPAIR REPORT - v{APP_VERSION}",
+        ln=True, align='C',
+    )
     pdf.set_font("Arial", 'I', 10)
     pdf.cell(0, 8, txt="Preliminary basis: selected ISO 24817 / ASME PCC-2 concepts", ln=True, align='C')
     pdf.ln(5)
 
     def add_section(title, data_dict):
+        ensure_page_space(8 + len(data_dict) * 6 + 5)
         pdf.set_font("Arial", 'B', 12)
         pdf.set_fill_color(200, 220, 255)
         pdf.cell(0, 8, txt=title, ln=True, fill=True)
@@ -58,6 +78,86 @@ def create_pdf(report_data):
             pdf.cell(90, 6, txt=safe_text(f"{key}:"), border=0)
             pdf.cell(0, 6, txt=safe_text(str(val)), ln=True, border=0)
         pdf.ln(5)
+
+    def ensure_page_space(required_height):
+        if pdf.get_y() + required_height > pdf.h - pdf.b_margin:
+            pdf.add_page()
+
+    def add_manual_b31g_table(candidate_assessments, governing_id):
+        columns = (
+            ("Defect ID", 38, "L"),
+            ("Length [mm]", 25, "R"),
+            ("Wall [mm]", 24, "R"),
+            ("Method", 24, "C"),
+            ("Applicable", 24, "C"),
+            ("Credit [MPa]", 28, "R"),
+            ("Governing", 25, "C"),
+        )
+        row_height = 5.5
+        title_height = 6
+
+        def fit_cell_text(value, width):
+            text = safe_text(str(value))
+            if pdf.get_string_width(text) <= width - 2:
+                return text
+            suffix = "..."
+            while text and pdf.get_string_width(text + suffix) > width - 2:
+                text = text[:-1]
+            return text + suffix
+
+        def draw_title(continued=False):
+            pdf.set_font("Arial", 'B', 10)
+            suffix = " (continued)" if continued else ""
+            pdf.cell(
+                0,
+                title_height,
+                txt=f"Individual B31G candidate assessments{suffix}",
+                ln=True,
+            )
+
+        def draw_header():
+            pdf.set_font("Arial", 'B', 7)
+            pdf.set_fill_color(225, 235, 248)
+            for heading, width, alignment in columns:
+                pdf.cell(
+                    width,
+                    row_height,
+                    txt=heading,
+                    border=1,
+                    align=alignment,
+                    fill=True,
+                )
+            pdf.ln(row_height)
+
+        ensure_page_space(title_height + 2 * row_height + 2)
+        draw_title()
+        draw_header()
+        for item in candidate_assessments:
+            if pdf.get_y() + row_height > pdf.h - pdf.b_margin:
+                pdf.add_page()
+                draw_title(continued=True)
+                draw_header()
+            assessment = item["assessment"]
+            values = (
+                item["defect_id"],
+                f"{item['length_mm']:.1f}",
+                f"{item['remaining_wall_mm']:.3f}",
+                assessment["method"].title(),
+                "Yes" if assessment["applicable"] else "No",
+                f"{item['credited_pressure_mpa']:.2f}",
+                "Yes" if item["defect_id"] == governing_id else "No",
+            )
+            pdf.set_font("Arial", '', 7)
+            for value, (_heading, width, alignment) in zip(values, columns):
+                pdf.cell(
+                    width,
+                    row_height,
+                    txt=fit_cell_text(value, width),
+                    border=1,
+                    align=alignment,
+                )
+            pdf.ln(row_height)
+        pdf.ln(3)
 
     add_section("1. Project & Pipeline Data", {
         "Customer": report_data['customer'],
@@ -94,12 +194,58 @@ def create_pdf(report_data):
     defect_assessment["Composite Pressure Deficit"] = (
         f"{report_data['p_composite_design']:.2f} MPa"
     )
+    is_external_corrosion = (
+        report_data["defect_type"] == "Corrosion"
+        and report_data["defect_loc"] == "External"
+    )
+    if is_external_corrosion:
+        defect_assessment.update({
+            "Defect Length Basis": report_data["defect_length_basis"],
+            "Overall Repair-Zone Span": (
+                f"{report_data['repair_zone_length_mm']:.1f} mm"
+            ),
+            "3t Interaction Threshold": (
+                f"{report_data['interaction_distance_mm']:.1f} mm"
+            ),
+            "B31G Candidates Assessed": str(
+                len(report_data["b31g_assessments"])
+            ),
+            "Governing Defect": report_data["governing_defect_id"],
+            "B31G Assessment Length": (
+                f"{report_data['governing_b31g_length_mm']:.1f} mm"
+            ),
+            "B31G Assessment Remaining Wall": (
+                f"{report_data['governing_b31g_remaining_wall_mm']:.3f} mm"
+            ),
+            "Governing Credited Pressure": (
+                f"{report_data['p_steel_capacity']:.2f} MPa"
+            ),
+        })
     add_section("2. Defect Assessment", defect_assessment)
+
+    if is_external_corrosion:
+        assumptions = report_data["defect_basis_assumptions"]
+        candidate_assessments = report_data["b31g_assessments"]
+        ensure_page_space(8 + len(assumptions) * 5 + 5)
+        pdf.set_font("Arial", 'B', 10)
+        pdf.cell(0, 6, txt="Defect-basis assumptions", ln=True)
+        pdf.set_font("Arial", '', 9)
+        for assumption in assumptions:
+            pdf.multi_cell(0, 5, txt=safe_text(f"- {assumption}"))
+        if report_data["defect_length_basis"] == ENTER_MANUALLY:
+            add_manual_b31g_table(
+                candidate_assessments,
+                report_data["governing_defect_id"],
+            )
+        else:
+            pdf.ln(3)
 
     add_section("3. Optimized Repair Design", {
         "Required Plies": f"{report_data['num_plies']} Layers",
         "Repair Thickness": f"{report_data['final_thickness']:.2f} mm",
-        "Min. Required ISO Length": f"{report_data['iso_length']:.0f} mm",
+        "Continuous Repair Length (ISO)": (
+            f"{report_data['iso_length']:.0f} mm"
+        ),
         "Procurement Length": f"{report_data['proc_length']} mm ({report_data['num_bands']} Bands)",
         "Design Factor": f"{report_data['design_factor']}"
     })
@@ -113,9 +259,17 @@ def create_pdf(report_data):
         "axial extent per Formulae 18/20/21; minimum thickness per 7.5.14. "
     )
     if report_data.get("b31g_details"):
+        b31g = report_data["b31g_details"]
+        method_label = b31g["method"].title()
+        applicability_note = (
+            " at current remaining wall. "
+            if b31g["applicable"]
+            else "; the governing assessment is outside applicability and "
+            "no substrate pressure credit is taken. "
+        )
         standards_note += (
-            "Substrate MAWP (p_s) per ASME B31G-2023 Level 1 (Modified) "
-            "at current remaining wall. "
+            "Substrate MAWP (p_s) per ASME B31G-2023 Level 1 "
+            f"({method_label}){applicability_note}"
         )
     elif allowable_pipe_stress is not None:
         standards_note += (
@@ -198,6 +352,8 @@ def run_calculation(
     internal_corrosion_rate=0.0,
     axial_load_case=0,
     cloth_width_mm=PROWRAP["cloth_width_mm"],
+    defect_length_basis=ACTUAL_DEFECT_LENGTH,
+    individual_defects=(),
 ):
     try:
         report_data = calculate_repair(
@@ -222,8 +378,11 @@ def run_calculation(
             cyclic_derating_factor=cyclic_derating_factor,
             axial_load_case=axial_load_case,
             cloth_width_mm=cloth_width_mm,
+            defect_length_basis=defect_length_basis,
+            individual_defects=individual_defects,
         )
     except ValueError as exc:
+        st.session_state.calc_active = False
         for err in str(exc).splitlines():
             st.error(f"❌ **INPUT ERROR:** {err}")
         return
@@ -319,6 +478,58 @@ def run_calculation(
             st.write(f"**Mechanism:** {defect_type}")
             st.write(f"**Calculation Basis:** {calculation_basis}")
             st.write(f"**Wall Loss:** {wall_loss_ratio*100:.1f}%")
+            if defect_type == "Corrosion" and defect_loc == "External":
+                st.write(
+                    "**Defect Length Basis:** "
+                    f"{report_data['defect_length_basis']}"
+                )
+                st.write(
+                    "**B31G Candidates Assessed:** "
+                    f"{len(report_data['b31g_assessments'])}"
+                )
+                st.write(
+                    "**Overall Repair-Zone Span:** "
+                    f"{report_data['repair_zone_length_mm']:.1f} mm"
+                )
+                st.write(
+                    "**3t Interaction Threshold:** "
+                    f"{report_data['interaction_distance_mm']:.1f} mm"
+                )
+                st.write(
+                    "**Governing Defect ID:** "
+                    f"{report_data['governing_defect_id']}"
+                )
+                st.write(
+                    "**B31G Assessment Length:** "
+                    f"{report_data['governing_b31g_length_mm']:.1f} mm"
+                )
+                st.write(
+                    "**B31G Assessment Remaining Wall:** "
+                    f"{report_data['governing_b31g_remaining_wall_mm']:.3f} mm"
+                )
+                for assumption in report_data["defect_basis_assumptions"]:
+                    st.info(assumption)
+                if report_data["defect_length_basis"] == ENTER_MANUALLY:
+                    assessment_rows = [
+                        {
+                            "Defect ID": item["defect_id"],
+                            "B31G length [mm]": item["length_mm"],
+                            "Remaining wall [mm]": item["remaining_wall_mm"],
+                            "Credited pressure [MPa]": item[
+                                "credited_pressure_mpa"
+                            ],
+                            "Governing": (
+                                item["defect_id"]
+                                == report_data["governing_defect_id"]
+                            ),
+                        }
+                        for item in report_data["b31g_assessments"]
+                    ]
+                    st.dataframe(
+                        assessment_rows,
+                        hide_index=True,
+                        width="stretch",
+                    )
             b31g = report_data.get("b31g_details")
             if b31g:
                 st.write(f"**Substrate MAWP p_s (ASME B31G {b31g['method'].title()}, SF={b31g['safety_factor']:.2f}):** {p_steel_capacity:.2f} MPa")
@@ -347,6 +558,10 @@ def run_calculation(
         with c2:
             st.markdown("### Structural Design")
             st.write(f"**Composite Design Pressure:** {p_composite_design:.2f} MPa")
+            st.write(
+                "**Continuous Repair Length:** "
+                f"{total_repair_length_calc:.1f} mm"
+            )
             st.write(f"**Design Strain Limit:** {design_strain*100:.3f}% (ISO 24817 Formula 11: fperf x fT2 x eps_lt)")
             type_b_details = report_data.get("type_b_details")
             if type_b_details:
@@ -427,12 +642,21 @@ def run_calculation(
             """)
         with c_defect:
             st.warning("**2. Defect Description**")
-            st.markdown(f"""
-            - **Mechanism:** {defect_type} ({defect_loc})
-            - **Remaining Wall:** {rem_wall} mm
-            - **Axial Length:** {length} mm
-            - **Wall Loss:** {wall_loss_ratio*100:.1f}%
-            """)
+            if defect_type == "Corrosion" and defect_loc == "External":
+                st.markdown(f"""
+                - **Mechanism:** {defect_type} ({defect_loc})
+                - **Minimum Remaining Wall:** {report_data['rem_wall']} mm
+                - **Overall Repair-Zone Span:** {report_data['repair_zone_length_mm']} mm
+                - **Governing Defect ID:** {report_data['governing_defect_id']}
+                - **Wall Loss:** {wall_loss_ratio*100:.1f}%
+                """)
+            else:
+                st.markdown(f"""
+                - **Mechanism:** {defect_type} ({defect_loc})
+                - **Remaining Wall:** {rem_wall} mm
+                - **Axial Length:** {length} mm
+                - **Wall Loss:** {wall_loss_ratio*100:.1f}%
+                """)
         with c_repair:
             st.success("**3. Optimized Repair Design**")
             st.markdown(f"""
@@ -482,7 +706,7 @@ def main():
     initialise_inputs(st.session_state)
 
     try:
-        st.title("🔧 Prowrap Repair Master Calculator")
+        st.title(f"🔧 {APP_NAME}")
         st.markdown(f"**Basis:** Preliminary ISO 24817 / ASME PCC-2 screening estimate | **T-Limit:** {PROWRAP['max_temp']}°C")
         
         st.sidebar.header("1. Project Info")
@@ -510,7 +734,103 @@ def main():
         )
         loc_ = st.sidebar.selectbox("Location", [NEUTRAL_CHOICE, "External", "Internal"], key="loc_", on_change=reset_calc)
         len_ = st.sidebar.number_input("Defect Length [mm]", key="len_", on_change=reset_calc)
-        rem_ = st.sidebar.number_input("Remaining Wall [mm]", key="rem_", on_change=reset_calc)
+        is_external_corrosion = type_ == "Corrosion" and loc_ == "External"
+        defect_length_basis = ACTUAL_DEFECT_LENGTH
+        individual_defects = ()
+        if is_external_corrosion:
+            defect_length_basis = st.sidebar.selectbox(
+                "Defect Length Basis",
+                [NEUTRAL_CHOICE, *DEFECT_LENGTH_BASES],
+                key="defect_length_basis",
+                on_change=reset_calc,
+            )
+            if defect_length_basis == ACTUAL_DEFECT_LENGTH:
+                st.sidebar.caption(
+                    "Defect Length is the longitudinal length of the "
+                    "continuous or combined interacting flaw."
+                )
+            elif defect_length_basis in {
+                INDEPENDENT_DEFECTS,
+                ENTER_MANUALLY,
+            }:
+                st.sidebar.caption(
+                    "Defect Length is the complete outer-to-outer "
+                    "repair-zone span for the overall continuous repair."
+                )
+        manual_input_error = None
+        if defect_length_basis == ENTER_MANUALLY:
+            if wall is None:
+                st.sidebar.caption(
+                    "3t Interaction Threshold: enter the nominal wall first."
+                )
+            else:
+                st.sidebar.caption(
+                    f"3t Interaction Threshold: {3.0 * wall:.1f} mm"
+                )
+            edited_manual_defects = st.sidebar.data_editor(
+                pd.DataFrame(
+                    st.session_state.manual_defect_rows,
+                    columns=MANUAL_DEFECT_COLUMNS,
+                ),
+                key="manual_defects_editor",
+                num_rows="dynamic",
+                hide_index=True,
+                column_order=MANUAL_DEFECT_COLUMNS,
+                column_config={
+                    "Defect ID": st.column_config.TextColumn(required=True),
+                    "Individual longitudinal length [mm]":
+                        st.column_config.NumberColumn(
+                            min_value=0.01, required=True,
+                        ),
+                    "Remaining wall [mm]": st.column_config.NumberColumn(
+                        min_value=0.0, required=True,
+                    ),
+                    "Separation exceeds 3t":
+                        st.column_config.CheckboxColumn(required=True),
+                },
+                on_change=reset_calc,
+            )
+            st.session_state.manual_defect_rows = (
+                edited_manual_defects.to_dict("records")
+            )
+            try:
+                individual_defects = manual_defects_from_state(
+                    st.session_state
+                )
+            except ValueError as exc:
+                manual_input_error = str(exc)
+                individual_defects = ()
+            rem_ = min(
+                (defect.remaining_wall_mm for defect in individual_defects),
+                default=None,
+            )
+        else:
+            rem_ = st.sidebar.number_input(
+                "Remaining Wall [mm]", key="rem_", on_change=reset_calc
+            )
+        if defect_length_basis == INDEPENDENT_DEFECTS:
+            interaction_distance = 3.0 * wall if wall is not None else None
+            st.sidebar.info(
+                "Each corrosion defect is 10 mm longitudinal by 10 mm "
+                "circumferential."
+            )
+            if interaction_distance is None:
+                st.sidebar.info(
+                    "Enter the nominal wall to calculate the 3t interaction "
+                    "threshold."
+                )
+            else:
+                st.sidebar.info(
+                    "Each corrosion defect is separated from every other "
+                    "defect by more than "
+                    f"{interaction_distance:g} mm (3t)."
+                )
+            st.sidebar.info(
+                "Each corrosion defect uses the entered remaining wall."
+            )
+            st.sidebar.info(
+                "The entered defect length is the overall repair-zone span."
+            )
         corr_rate = calculation_corrosion_rate(st.session_state)
         if loc_ == "Internal" and type_ == "Corrosion":
             corr_rate = st.sidebar.number_input(
@@ -550,7 +870,12 @@ def main():
             "Calculate & Optimize",
             type="primary" if form_ready else "secondary",
         ):
-            if missing_fields:
+            if manual_input_error:
+                st.session_state.calc_active = False
+                st.sidebar.error(
+                    f"❌ **INPUT ERROR:** {manual_input_error}"
+                )
+            elif missing_fields:
                 st.session_state.calc_active = False
                 st.sidebar.error(
                     f"Missing required fields: {', '.join(missing_fields)}."
@@ -582,6 +907,8 @@ def main():
                 corr_rate,
                 axial_load_case,
                 cloth_width_mm,
+                defect_length_basis=defect_length_basis,
+                individual_defects=individual_defects,
             )
             
     except Exception as e:
